@@ -16,44 +16,48 @@ public import WireMVC
 /// decodes `Input` and encodes `Output`, so `@JSONBody`'s content-type rules and WireMVC's own decoding
 /// stay separate concerns. Only the registration boundary moves.
 public enum WireOpenAPIRoutes {
+    public typealias Operation = WireOpenAPIOperations.Operation
 
-    /// Register every operation `contributor` would have put on a `ServerTransport` as a route on
-    /// `builder` instead.
+
+    /// Every operation `contributor` would have registered on a `ServerTransport`, captured instead.
     ///
-    /// Takes a `TransportContributor` — the witness WireOpenAPIGen already generates for the aggregate
-    /// proxy — so the unified path reuses the direct path's registration rather than duplicating it. The
-    /// generated `RouteContributor` conformance is therefore a single call.
-    public static func register<Builder: HTTPServerRouteBuilder>(
-        _ contributor: some TransportContributor,
-        on builder: inout Builder,
-        maximumBodySize: Int = 1_000_000
-    ) throws
-    where
-        // `SendableMetatype` on the context is one step stricter than the proposal requires, and is what
-        // keeps the per-route `@Sendable` closure warning-clean (spike-12's finding). The reader and
-        // sender already declare it on `HTTPServerRouteBuilder`.
-        Builder.RequestContext: ~Copyable & SendableMetatype,
-        Builder.Reader: ~Copyable,
-        Builder.ResponseSender: ~Copyable,
-        Builder.ResponseSender.Writer: ~Copyable
-    {
+    /// Registration itself is emitted by `WireOpenAPIGen` rather than performed here, because a
+    /// `@Middleware` fold has to be **witness-local**: `wireCompose` returns the chain's *concrete*
+    /// composed type, which is what lets the terminal call `withPendingContents` on the fold's final box.
+    /// A runtime helper would have to erase it and could not. So this collects, the generated witness
+    /// loops, and each route is registered with its own fold around `invoke`.
+    public static func operations(of contributor: some TransportContributor) throws -> [Operation] {
         let collector = WireOpenAPIOperations()
-        // The handler and the body limit travel together so the terminal takes one value for "what to
-        // run" rather than two positional arguments.
         try contributor.registerWireHandlers(on: collector)
+        return collector.operations
+    }
 
-        for route in collector.operations {
-            let terminal = Terminal(handler: route.handler, maximumBodySize: maximumBodySize)
-            builder.register(method: route.method, path: route.path) { request, _, parameters, reader, sender in
-                try await invoke(
-                    terminal,
-                    request: request,
-                    metadata: ServerRequestMetadata(pathParameters: parameters),
-                    reader: reader,
-                    sender: sender
-                )
-            }
-        }
+    /// The terminal a generated witness calls, inside the fold. Takes the box's already-projected
+    /// contents rather than the raw handler arguments, since with middleware the reader and sender reach
+    /// it through `withPendingContents`.
+    public static nonisolated(nonsending) func invoke<
+        Reader: AsyncReader & ~Copyable & SendableMetatype,
+        Sender: HTTPResponseSender & ~Copyable & SendableMetatype
+    >(
+        _ operation: Operation,
+        request: HTTPRequest,
+        pathParameters: [String: Substring],
+        reader: consuming Reader,
+        sender: consuming Sender,
+        maximumBodySize: Int = 1_000_000
+    ) async throws
+    where
+        Reader.ReadElement == UInt8,
+        Reader.FinalElement == HTTPFields?,
+        Sender.Writer: ~Copyable
+    {
+        try await invoke(
+            Terminal(handler: operation.handler, maximumBodySize: maximumBodySize),
+            request: request,
+            metadata: ServerRequestMetadata(pathParameters: pathParameters),
+            reader: reader,
+            sender: sender
+        )
     }
 
     /// What a matched route runs: the generator's operation closure plus the collection limit applied to

@@ -25,6 +25,7 @@ struct TaskStore: Sendable {
 /// `servers:` entry (`/api/v1`), which `registerHandlers` reads.
 @Singleton
 @OpenAPIController(spec: "Tasks")
+@Middleware(RequireAPIKeyKeys.factory)
 struct TaskController: APIProtocol {
     @Inject let store: TaskStore
 
@@ -37,6 +38,7 @@ struct TaskController: APIProtocol {
 
 @Singleton
 @Controller("/status")
+@Middleware(RequireAPIKeyKeys.factory)
 struct StatusController {
     @Inject let store: TaskStore
 
