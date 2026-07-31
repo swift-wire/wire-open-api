@@ -28,6 +28,9 @@ import Yams
 struct DiscoveredController {
     let typeName: String
     let spec: String?
+    /// The verbatim argument of each type-level `@Middleware`, in source order — controller-scope
+    /// middleware, folded around every one of this controller's operations.
+    let middleware: [String]
     let file: String
     let line: Int
 }
@@ -90,6 +93,23 @@ final class ControllerScanner: SyntaxVisitor {
         return .visitChildren
     }
 
+    /// The argument of each `@Middleware` on a declaration, in source order. Wire has already lifted the
+    /// matching value onto the aggregate proxy — a method-level `@Middleware` hoists to its enclosing type
+    /// (BindingDiscovery), and the proxy synthesis reattributes each subject's input edges onto the
+    /// aggregate — so this only has to name the field the fold reads.
+    private func middlewareArguments(of attributes: AttributeListSyntax) -> [String] {
+        var arguments: [String] = []
+        for element in attributes {
+            guard let attribute = element.as(AttributeSyntax.self),
+                attribute.attributeName.trimmedDescription == "Middleware",
+                case .argumentList(let list) = attribute.arguments,
+                let first = list.first
+            else { continue }
+            arguments.append(first.expression.trimmedDescription)
+        }
+        return arguments
+    }
+
     private func record(name: String, attributes: AttributeListSyntax, at token: TokenSyntax) {
         for element in attributes {
             guard let attribute = element.as(AttributeSyntax.self),
@@ -105,6 +125,7 @@ final class ControllerScanner: SyntaxVisitor {
                 DiscoveredController(
                     typeName: name,
                     spec: spec,
+                    middleware: middlewareArguments(of: attributes),
                     file: file,
                     line: converter.location(for: token.position).line
                 )
@@ -158,6 +179,27 @@ for (spec, controllers) in byGroup where controllers.count > 1 {
         )
     )
     exit(1)
+}
+
+// MARK: - proxy field names
+
+// The fields a `@Middleware` fold reads are emitted by **swift-wire**, so these rules have to match its
+// `.injectsFromGraph` pass — and they match wire-mvc's `RouteCodegen` copies, which derive them the same
+// way. Three derivations of one contract is two too many; the rules belong in swift-wire, which owns the
+// emission, with both adapters reading them. Until then the compiler is the check: a mismatch is a
+// "no member" error at the fold, exactly as the `_wireSubject` handshake is.
+
+/// `_wire` + the simple (generics- and namespace-stripped) type name, upper-cameled —
+/// `Mod.RequireAPIKey<…>` → `_wireRequireAPIKey`.
+func dependencyPropertyName(forType type: String) -> String {
+    let withoutGenerics = type.prefix { $0 != "<" }
+    let simple = withoutGenerics.split(separator: ".").last.map(String.init) ?? String(withoutGenerics)
+    return "_wire" + simple.prefix(1).uppercased() + simple.dropFirst()
+}
+
+/// A key reference reduced to an identifier fragment — `Keys.audit` → `Keys_audit`.
+func sanitizedKeyFragment(_ key: String) -> String {
+    String(key.map { $0.isLetter || $0.isNumber ? $0 : "_" })
 }
 
 // MARK: - the server prefix
@@ -233,8 +275,55 @@ lines.append("")
 let serverURLArgument = serverPrefix == .none ? "" : ", serverURL: try Servers.Server1.url()"
 
 for (spec, controllers) in byGroup.sorted(by: { $0.key < $1.key }) {
-    guard !controllers.isEmpty else { continue }
+    guard let controller = controllers.first else { continue }
     let proxy = proxyTypeName(for: spec.isEmpty ? nil : spec)
+
+    // Controller-scope `@Middleware`, folded around every operation of this spec. The fold is emitted
+    // *here* rather than run from a helper because `wireCompose` returns the chain's concrete composed
+    // type — erasing it would stop the terminal reading the final box's contents.
+    //
+    // Each entry names a field Wire has already lifted onto the proxy: `T.self` injects the binding by
+    // type, a `FactoryKey` a synthesised factory whose `create` is specialised at the builder's box
+    // roles. Same spelling WireMVC's route codegen uses, so one `@Middleware(RequireAPIKey.self)`
+    // component serves an operation and a `@Get` alike.
+    let foldEntries = controller.middleware.map { argument -> String in
+        if argument.hasSuffix(".self") {
+            return "            self.\(dependencyPropertyName(forType: String(argument.dropLast(5))))"
+        }
+        return
+            "            self._wireFactory_\(sanitizedKeyFragment(argument))"
+            + ".create(Builder.RequestContext.self, Builder.Reader.self, Builder.ResponseSender.self)"
+    }
+    let closureSignature: String
+    let terminal: String
+    if foldEntries.isEmpty {
+        closureSignature = " request, _, parameters, reader, sender in"
+        terminal = """
+                        try await WireOpenAPIRoutes.invoke(
+                            wireOpenAPIRoute, request: request, pathParameters: parameters,
+                            reader: reader, sender: sender
+                        )
+            """
+    } else {
+        closureSignature = " request, requestContext, parameters, reader, responseSender in"
+        terminal = """
+                        let wireOpenAPIBox = RequestResponseMiddlewareBox.pending(
+                            request: request, requestContext: requestContext, reader: reader,
+                            responseSender: responseSender
+                        )
+                        let wireOpenAPIChain = wireCompose {
+            \(foldEntries.joined(separator: "\n"))
+                        }
+                        try await wireOpenAPIChain.intercept(input: wireOpenAPIBox) { wireOpenAPIFinalBox in
+                            try await wireOpenAPIFinalBox.withPendingContents { request, _, reader, responseSender in
+                                try await WireOpenAPIRoutes.invoke(
+                                    wireOpenAPIRoute, request: request, pathParameters: parameters,
+                                    reader: reader, sender: responseSender
+                                )
+                            }
+                        }
+            """
+    }
 
     // The shape `registerHandlers` needs. At one subject the aggregate keeps the singular `_wireSubject`
     // field, so the witness delegates to the controller's own generated registration — under the
@@ -263,7 +352,11 @@ for (spec, controllers) in byGroup.sorted(by: { $0.key < $1.key }) {
                 Builder.ResponseSender: ~Copyable,
                 Builder.ResponseSender.Writer: ~Copyable
             {
-                try WireOpenAPIRoutes.register(self, on: &builder)
+                for wireOpenAPIRoute in try WireOpenAPIRoutes.operations(of: self) {
+                    builder.register(method: wireOpenAPIRoute.method, path: wireOpenAPIRoute.path) {\(closureSignature)
+        \(terminal)
+                    }
+                }
             }
         }
         """
