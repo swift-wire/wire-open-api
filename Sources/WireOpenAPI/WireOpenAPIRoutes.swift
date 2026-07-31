@@ -18,7 +18,6 @@ public import WireMVC
 public enum WireOpenAPIRoutes {
     public typealias Operation = WireOpenAPIOperations.Operation
 
-
     /// Every operation `contributor` would have registered on a `ServerTransport`, captured instead.
     ///
     /// Registration itself is emitted by `WireOpenAPIGen` rather than performed here, because a
