@@ -269,26 +269,6 @@ for (spec, controllers) in byGroup.sorted(by: { $0.key < $1.key }) {
         """
     )
     lines.append("")
-
-    // The conformance the proxy is *collated* as. It delegates to the witness above: the operation set
-    // is discovered by running the generator's own registration against a collector, so there is no
-    // per-operation codegen here.
-    lines.append(
-        """
-        extension \(proxy): RouteContributor {
-            func registerWireRoutes<Builder: HTTPServerRouteBuilder>(on builder: inout Builder) throws
-            where
-                Builder.RequestContext: ~Copyable & SendableMetatype,
-                Builder.Reader: ~Copyable,
-                Builder.ResponseSender: ~Copyable,
-                Builder.ResponseSender.Writer: ~Copyable
-            {
-                try WireOpenAPIRoutes.register(self, on: &builder)
-            }
-        }
-        """
-    )
-    lines.append("")
 }
 
 try (lines.joined(separator: "\n")).write(toFile: outputPath, atomically: true, encoding: .utf8)
