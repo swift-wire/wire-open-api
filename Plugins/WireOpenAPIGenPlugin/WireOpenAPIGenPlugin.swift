@@ -1,27 +1,32 @@
 import Foundation
 import PackagePlugin
 
-/// `WireOpenAPIBuildPlugin` — the adapter-owned build plugin a WireOpenAPI consumer applies **instead of**
-/// swift-wire's `WireBuildPlugin`. It runs two tools over one source set, both emitting into this module:
+/// `WireOpenAPIGenPlugin` — the **domain half only**: it runs `WireOpenAPIGen` and nothing else.
 ///
-///   • `WireGen` (swift-wire) — the graph, the key checks, and the contributor-proxy structs, including
-///     the aggregate `_WireOpenAPIContributor[_<Spec>]` that `@OpenAPIController` directs;
-///   • `WireOpenAPIGen` (this package) — the `TransportContributor` conformance on those proxies.
+/// `WireOpenAPIBuildPlugin` bundles WireGen with it, which is right for an app whose only adapter is
+/// this one. It is wrong for an app that also has `@Controller` routes: a target may apply only one
+/// plugin that runs WireGen (two would compile two `_WireGraph` declarations into one module), so
+/// bundling forces whichever plugin is applied to orchestrate every other adapter's generator too —
+/// which is how a `@Controller` in the fixture ended up with a proxy and no witness.
 ///
-/// Orchestration is domain knowledge ("OpenAPI controllers need a witness generator"), so it lives with
-/// the adapter and WireGen stays structural — the same split spike-23 settled for WireMVC.
+/// Nothing requires the bundling. The domain generators never read WireGen's output: they read the same
+/// sources and meet the emitted proxy only on the deterministic field-name rule both apply
+/// independently. So adapters compose by being listed:
+///
+///     plugins: [
+///         .plugin(name: "WireBuildPlugin", package: "swift-wire"),          // the graph, once
+///         .plugin(name: "WireMVCRouteGenPlugin", package: "wire-mvc"),      // witnesses
+///         .plugin(name: "WireOpenAPIGenPlugin", package: "wire-open-api"),  // conformances
+///     ]
 @main
-struct WireOpenAPIBuildPlugin: BuildToolPlugin {
+struct WireOpenAPIGenPlugin: BuildToolPlugin {
     func createBuildCommands(context: PluginContext, target: Target) async throws -> [Command] {
         guard let sourceModule = target.sourceModule else { return [] }
         let swiftSources = sourceModule.sourceFiles(withSuffix: "swift").map(\.url)
         guard !swiftSources.isEmpty else { return [] }
 
-        let wireGen = try context.tool(named: "WireGen")
         let openAPIGen = try context.tool(named: "WireOpenAPIGen")
 
-        let graphURL = context.pluginWorkDirectoryURL.appendingPathComponent("_WireGraph.swift")
-        let keyChecksURL = context.pluginWorkDirectoryURL.appendingPathComponent("_WireKeyChecks.swift")
         let handlersURL = context.pluginWorkDirectoryURL.appendingPathComponent("_WireOpenAPIHandlers.swift")
 
         // Cross-module composition, the same rule swift-wire's own plugin applies: re-parse the sources of
@@ -57,16 +62,6 @@ struct WireOpenAPIBuildPlugin: BuildToolPlugin {
         }
 
         let allInputFiles = swiftSources + dependencyGroups.flatMap(\.sources)
-        let testingVariants = sourceModule.kind == .test ? ["--testing-variants"] : []
-
-        var wireGenArguments =
-            [graphURL.path, keyChecksURL.path] + testingVariants
-            + ["--module", sourceModule.moduleName] + swiftSources.map(\.path)
-        for group in dependencyGroups {
-            wireGenArguments +=
-                [group.isExternal ? "--external-module" : "--module", group.module]
-                + group.sources.map(\.path)
-        }
 
         // Each re-parsed Wire-aware dependency becomes an `--import`, so the emitted conformances — which
         // compile in *this* module — can name a controller declared in a shared library.
@@ -90,13 +85,6 @@ struct WireOpenAPIBuildPlugin: BuildToolPlugin {
 
         return [
             .buildCommand(
-                displayName: "WireGen \(target.name)",
-                executable: wireGen.url,
-                arguments: wireGenArguments,
-                inputFiles: allInputFiles,
-                outputFiles: [graphURL, keyChecksURL]
-            ),
-            .buildCommand(
                 displayName: "WireOpenAPIGen \(target.name)",
                 executable: openAPIGen.url,
                 arguments: openAPIGenArguments,
@@ -106,7 +94,7 @@ struct WireOpenAPIBuildPlugin: BuildToolPlugin {
                 // recorded exactly this hazard; the fix is one line and easy to omit.
                 inputFiles: allInputFiles + specs,
                 outputFiles: [handlersURL]
-            ),
+            )
         ]
     }
 }

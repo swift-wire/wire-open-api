@@ -19,6 +19,8 @@ let package = Package(
         // A consumer applies this INSTEAD of swift-wire's WireBuildPlugin: it runs WireGen for the graph
         // and the contributor-proxy structs, then WireOpenAPIGen for those proxies' witnesses.
         .plugin(name: "WireOpenAPIBuildPlugin", targets: ["WireOpenAPIBuildPlugin"]),
+        // The domain half alone, for an app that uses more than one adapter — see the plugin's own note.
+        .plugin(name: "WireOpenAPIGenPlugin", targets: ["WireOpenAPIGenPlugin"]),
     ],
     dependencies: [
         .package(url: "https://github.com/tachyonics/swift-wire.git", branch: "main"),
@@ -27,6 +29,9 @@ let package = Package(
         // The 6.4 line, matching wire-mvc: SPM version ranges don't resolve pre-release tags, and the
         // branch pin also overrides swift-wire's transitive 603 requirement.
         .package(url: "https://github.com/swiftlang/swift-syntax", branch: "release/6.4.x"),
+        // Reads the document's `servers:` block — the only part of the spec the codegen needs today.
+        // The same parser swift-openapi-generator uses, and JSON is valid YAML, so `openapi.json` works.
+        .package(url: "https://github.com/jpsim/Yams.git", "4.0.0"..<"7.0.0"),
         // Operations are collated as WireMVC routes (M6d.1b), so wire-mvc is a core dependency. It is
         // proposal-native (tools 6.4, macOS 26), which is why this package is too.
         // `ServerTransport` trait: serving the collated routes on Hummingbird/Vapor/Lambda goes through
@@ -63,7 +68,13 @@ let package = Package(
             dependencies: [
                 .product(name: "SwiftSyntax", package: "swift-syntax"),
                 .product(name: "SwiftParser", package: "swift-syntax"),
+                .product(name: "Yams", package: "Yams"),
             ]
+        ),
+        .plugin(
+            name: "WireOpenAPIGenPlugin",
+            capability: .buildTool(),
+            dependencies: ["WireOpenAPIGen"]
         ),
         .plugin(
             name: "WireOpenAPIBuildPlugin",

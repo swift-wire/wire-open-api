@@ -30,6 +30,55 @@ jobs:
         # or exits non-zero.
         run: swift run WireOpenAPIExample
 
+  Fixtures:
+    name: Fixtures — serve and probe
+    runs-on: ubuntu-24.04
+    container: swiftlang/swift:nightly-6.4.x-noble
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install dependencies
+        # curl: the fixture's generated @main serves indefinitely, so it is probed rather than run to
+        # completion.
+        run: apt-get update && apt-get install -y libssl-dev curl
+      - name: Build
+        working-directory: Fixtures
+        run: swift build
+      - name: Serve an OpenAPI operation and a @Get route from one router
+        working-directory: Fixtures
+        # The M6d.1 gate. Four plugins run over one target — swift-openapi-generator, WireGen,
+        # WireMVCRouteGen, WireOpenAPIGen — and both controllers collate into
+        # WireMVCKeys.routeContributors, so the generated @main serves them from a single router.
+        run: |
+          BIN="$(swift build --show-bin-path)/WireOpenAPIBootstrapExample"
+          stdbuf -oL "$BIN" > serverlog.txt 2>&1 &
+          pid=$!
+          ok=0
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8080/status/tasks -o /dev/null; then ok=1; break; fi
+            sleep 1
+          done
+          # The spec-driven operation, under the prefix its `servers:` block declares. Registering at
+          # `/tasks/{id}` instead would mean the generated witness dropped the serverURL — the bug the
+          # fixture caught, since registerHandlers' own default is "/" and not the document's server.
+          openapi=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/api/v1/tasks/42)
+          # The annotation-driven route, from the same router.
+          mvc=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/status/tasks)
+          # An unmatched path reaches the @NotFound fallback, which proves the operations are *inside*
+          # the router rather than mounted beside it.
+          notfound=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/nope)
+          # Unprefixed: must NOT be registered.
+          unprefixed=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/tasks/42)
+          kill "$pid" 2>/dev/null || true
+          [ "$ok" = 1 ] || { echo "the fixture did not bind"; cat serverlog.txt; exit 1; }
+          echo "GET /api/v1/tasks/42 → $openapi"
+          echo "GET /status/tasks    → $mvc"
+          echo "GET /nope            → $notfound"
+          echo "GET /tasks/42        → $unprefixed (expect 404: the prefix comes from servers:)"
+          case "$openapi" in *'"title" : "task-42"'*"[200]") ;; *) echo "the OpenAPI operation did not serve"; exit 1;; esac
+          case "$mvc" in *'{"count":3}'*"[200]") ;; *) echo "the WireMVC route did not serve"; exit 1;; esac
+          case "$notfound" in *"no route here"*"[404]") ;; *) echo "@NotFound did not fire"; exit 1;; esac
+          [ "$unprefixed" = 404 ] || { echo "operation registered without its server prefix"; exit 1; }
+
   SwiftFormat:
     name: swift-format (6.4 toolchain)
     runs-on: ubuntu-24.04
