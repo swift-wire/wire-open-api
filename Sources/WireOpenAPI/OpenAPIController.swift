@@ -1,4 +1,3 @@
-import OpenAPIRuntime
 import Wire
 
 // The controller collation feature: the `@OpenAPIController` marker and its aggregate-proxy directive.
