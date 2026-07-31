@@ -31,7 +31,11 @@ let package = Package(
         // proposal-native (tools 6.4, macOS 26), which is why this package is too.
         // `ServerTransport` trait: serving the collated routes on Hummingbird/Vapor/Lambda goes through
         // `WireMVCServerTransport`, which the trait gates.
-        .package(url: "https://github.com/tachyonics/wire-mvc.git", branch: "main", traits: [.defaults, "ServerTransport"]),
+        .package(
+            url: "https://github.com/tachyonics/wire-mvc.git",
+            branch: "main",
+            traits: [.defaults, "ServerTransport"]
+        ),
     ],
     targets: [
         .macro(
