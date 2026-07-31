@@ -1,8 +1,14 @@
 disabled_rules:
   - trailing_whitespace
   - void_return
-analyzer_rules:
-  - unused_import
+  # swift-format owns brace placement; it puts the opening brace on its own line after a
+  # multi-line `where` clause (which the proposal's ~Copyable generic constraints in
+  # WireOpenAPIMVC require), which this rule disagrees with. Cede formatting to the
+  # formatter — the same resolution wire-mvc reached.
+  - opening_brace
+# The `unused_import` analyzer rule is gone with the 6.4 move: it drives SourceKit against the
+# compiler build log, whose 6.4-only flags SwiftLint's SourceKit rejects. On 6.4 the compiler's own
+# InternalImportsByDefault emits unused-import warnings natively instead.
 included:
   - Sources
 line_length: 150
