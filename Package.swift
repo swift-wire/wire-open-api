@@ -15,7 +15,10 @@ let package = Package(
     name: "wire-open-api",
     platforms: [.macOS(.v15)],
     products: [
-        .library(name: "WireOpenAPI", targets: ["WireOpenAPI"])
+        .library(name: "WireOpenAPI", targets: ["WireOpenAPI"]),
+        // A consumer applies this INSTEAD of swift-wire's WireBuildPlugin: it runs WireGen for the graph
+        // and the contributor-proxy structs, then WireOpenAPIGen for those proxies' witnesses.
+        .plugin(name: "WireOpenAPIBuildPlugin", targets: ["WireOpenAPIBuildPlugin"]),
     ],
     dependencies: [
         .package(url: "https://github.com/tachyonics/swift-wire.git", branch: "main"),
@@ -40,6 +43,22 @@ let package = Package(
                 .product(name: "OpenAPIRuntime", package: "swift-openapi-runtime"),
             ]
         ),
+        // The domain half of the codegen — fills the body hole WireGen leaves on each aggregate proxy.
+        .executableTarget(
+            name: "WireOpenAPIGen",
+            dependencies: [
+                .product(name: "SwiftSyntax", package: "swift-syntax"),
+                .product(name: "SwiftParser", package: "swift-syntax"),
+            ]
+        ),
+        .plugin(
+            name: "WireOpenAPIBuildPlugin",
+            capability: .buildTool(),
+            dependencies: [
+                "WireOpenAPIGen",
+                .product(name: "WireGen", package: "swift-wire"),
+            ]
+        ),
         .executableTarget(
             name: "WireOpenAPIExample",
             dependencies: [
@@ -48,7 +67,7 @@ let package = Package(
                 .product(name: "OpenAPIRuntime", package: "swift-openapi-runtime"),
                 .product(name: "HTTPTypes", package: "swift-http-types"),
             ],
-            plugins: [.plugin(name: "WireBuildPlugin", package: "swift-wire")]
+            plugins: [.plugin(name: "WireOpenAPIBuildPlugin")]
         ),
         .testTarget(
             name: "WireOpenAPIMacrosTests",
