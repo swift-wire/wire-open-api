@@ -6,68 +6,39 @@ on:
   pull_request:
     branches: [ main ]
 
+# wire-open-api is swift-tools-version 6.4 and macOS 26 since M6d.1: `WireOpenAPIMVC` mounts OpenAPI
+# operations as WireMVC routes, and wire-mvc is proposal-native. It therefore builds only on a Swift 6.4
+# toolchain — the jobs run on the nightly 6.4 container, since SwiftyLab/setup-swift installs released
+# toolchains only. swift-syntax is pinned to its release/6.4.x branch (SPM version ranges don't resolve
+# pre-release tags; the branch pin also overrides swift-wire's transitive 603 requirement).
 jobs:
-  BuildLinux:
-    name: Linux / Swift ${{ matrix.swift-version }}
-    strategy:
-      fail-fast: false
-      matrix:
-        swift-version: ["6.3.3"]
+  BuildAndTest:
+    name: Swift 6.4 nightly
     runs-on: ubuntu-24.04
+    container: swiftlang/swift:nightly-6.4.x-noble
     steps:
       - uses: actions/checkout@v6
-      - uses: SwiftyLab/setup-swift@v1
-        with:
-          swift-version: ${{ matrix.swift-version }}
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev curl unzip
+        run: apt-get update && apt-get install -y libssl-dev curl
       - name: Build
-        run: swift build -c release -Xswiftc -strict-concurrency=complete
-      - name: Build (verbose, for SwiftLint)
-        # -v captures compiler invocations for SwiftLint's unused_import analyzer;
-        # redirected to file to keep the CI log readable.
-        run: swift build -v > build.log 2>&1
-      - name: Install SwiftLint
-        run: |
-          curl -sL https://github.com/realm/SwiftLint/releases/download/0.63.2/swiftlint_linux_amd64.zip -o swiftlint.zip
-          unzip -o swiftlint.zip -d /usr/local/bin
-          chmod +x /usr/local/bin/swiftlint
-      - name: SwiftLint unused imports
-        run: swiftlint analyze --strict --quiet --compiler-log-path build.log
-
-  EndToEnd:
-    name: End-to-end example / ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: SwiftyLab/setup-swift@v1
-        with:
-          swift-version: "6.3.3"
-      - name: Install dependencies (Linux)
-        if: startsWith(matrix.os, 'ubuntu')
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev
+        run: swift build
+      - name: Test
+        run: swift test
       - name: Run end-to-end example
-        # Bootstraps the graph via the build plugin, collates a TransportContributor, and
-        # applies it to a recording ServerTransport in-process. Prints "wire-open-api OK"
-        # or traps (precondition).
+        # Builds through WireOpenAPIBuildPlugin (WireGen + WireOpenAPIGen), collates two specs onto two
+        # aggregate proxies, and applies both to a recording ServerTransport. Prints "wire-open-api OK"
+        # or exits non-zero.
         run: swift run WireOpenAPIExample
 
   SwiftFormat:
-    name: swift-format / Swift ${{ matrix.swift-version }}
-    strategy:
-      matrix:
-        swift-version: ["6.3.3"]
+    name: swift-format (6.4 toolchain)
     runs-on: ubuntu-24.04
+    container: swiftlang/swift:nightly-6.4.x-noble
     steps:
       - uses: actions/checkout@v6
-      - uses: SwiftyLab/setup-swift@v1
-        with:
-          swift-version: ${{ matrix.swift-version }}
       - name: Run swift-format
+        # From the 6.4 toolchain so it parses the proposal's ~Copyable / consuming sending syntax that
+        # WireOpenAPIMVC's bridge carries (a released swift-format can't).
         run: swift-format format --recursive --in-place .
       - name: Check for formatting differences
         run: |
@@ -76,11 +47,14 @@ jobs:
 
   SwiftLint:
     name: SwiftLint 0.63.2
+    # `swiftlint lint` is SwiftSyntax-based and parses the 6.4 sources fine, so it needs no toolchain.
+    # The `unused_import` *analyzer* rule is dropped: it drives SourceKit against the compiler build log,
+    # whose 6.4-only flags this SwiftLint's SourceKit rejects — on 6.4 the compiler's own
+    # InternalImportsByDefault emits unused-import warnings natively instead.
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
       - name: Install SwiftLint
-        # The prebuilt Linux binary needs the GLIBC on ubuntu-24.04+.
         run: |
           curl -sL https://github.com/realm/SwiftLint/releases/download/0.63.2/swiftlint_linux_amd64.zip -o swiftlint.zip
           unzip -o swiftlint.zip -d /usr/local/bin

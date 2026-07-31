@@ -4,15 +4,24 @@
 adapter for [swift-openapi-generator](https://github.com/apple/swift-openapi-generator).
 
 It collates `@OpenAPIController` controllers (types conforming to the generated
-`APIProtocol`) onto one generated proxy per spec, has Wire emit a `TransportComposable`
-conformance on the generated graph, and registers the collated handlers onto a user-owned
-`some ServerTransport` that stays *outside* the graph. Because the target is
-`ServerTransport` — and the package depends only on `OpenAPIRuntime`, no HTTP framework —
-the same wired controller mounts on Hummingbird, Vapor, or Lambda unchanged.
+`APIProtocol`) onto one generated proxy per spec, contributed to
+**`WireMVCKeys.routeContributors`** — the same key `@Controller` uses. An OpenAPI operation is
+therefore a route like any other: it serves under the same router, `@NotFound` fallback,
+`@ErrorResponse` tiers, global middleware layer and `@WireMVCBootstrap` composition root as an
+annotation-driven `@Get`. One routing model, not two.
+
+Serving on Hummingbird, Vapor or Lambda is `WireMVCServerTransport.apply(graph, to: transport)`
+— the same call a WireMVC app already makes, registering every collated route uniformly. There
+is deliberately no WireOpenAPI-specific facade: one would have to filter the route collection by
+conformance, silently dropping the app's `@Controller` routes, and would double-register if used
+alongside the correct call.
 
 Handlers-only: unlike a native-framework adapter, OpenAPI is a transport surface, not a
 runtime, so services and lifecycle stay with the runtime's own adapter. The two coexist
 on one graph.
+
+A consumer depends on **both** `WireOpenAPI` and `WireMVC` directly — Wire activates a
+dependency's keys only when it is a direct dependency, and the collation key is WireMVC's.
 
 See [swift-wire's WireOpenAPIDesign.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/WireOpenAPIDesign.md)
 for the full design.

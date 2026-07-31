@@ -1,4 +1,5 @@
 import Wire
+import WireMVC
 
 // The controller collation feature: the `@OpenAPIController` marker and its aggregate-proxy directive.
 
@@ -30,7 +31,9 @@ public macro OpenAPIController(spec: String) =
     #externalMacro(module: "WireOpenAPIMacros", type: "OpenAPIControllerMacro")
 
 /// Directs the plugin: every `@OpenAPIController` subject sharing a `spec` collates onto one
-/// `_WireOpenAPIContributor[_<Spec>]` proxy, which is what contributes to `TransportKeys.handlers`.
+/// `_WireOpenAPIContributor[_<Spec>]` proxy, which contributes to **`WireMVCKeys.routeContributors`** —
+/// the same key `@Controller` uses. An operation is a route, so it serves under the same router,
+/// `@NotFound`, error tiers, middleware layer and composition root as an annotation-driven one.
 ///
 /// The aggregate — rather than a proxy per controller — is forced by the generator: `registerHandlers` is
 /// emitted once per document and registers *every* operation from a single handler, so one conformer per
@@ -38,7 +41,7 @@ public macro OpenAPIController(spec: String) =
 public let wireOpenAPIControllerAlias = WireAdapterAnnotationV1(
     annotation: "OpenAPIController",
     capability: .contributesAggregateProxy(
-        to: TransportKeys.handlers,
+        to: WireMVCKeys.routeContributors,
         proxyTypeName: "_WireOpenAPIContributor",
         proxyScope: .singleton,
         groupedByAttribute: "spec"

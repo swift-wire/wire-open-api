@@ -1,0 +1,112 @@
+import BasicContainers
+import HTTPAPIs
+import HTTPTypes
+import OpenAPIRuntime
+public import WireMVC
+
+/// Mounts OpenAPI operations as **WireMVC routes** — the inbound counterpart to
+/// `WireMVCServerTransport`, which carries WireMVC routes out onto a `some ServerTransport`.
+///
+/// This is what makes an operation a route: it then sits under the same `@NotFound` fallback, the same
+/// global middleware front layer, the same `@ErrorResponse` tiers and the same `@WireMVCBootstrap`
+/// composition root as an annotation-driven `@Get`. An app stops having two routing models — and serving
+/// on a foreign transport becomes `WireMVCServerTransport.apply`, the call it would make anyway.
+///
+/// What it does *not* do is change who owns request/response binding: the generator's closure still
+/// decodes `Input` and encodes `Output`, so `@JSONBody`'s content-type rules and WireMVC's own decoding
+/// stay separate concerns. Only the registration boundary moves.
+public enum WireOpenAPIRoutes {
+
+    /// Register every operation `contributor` would have put on a `ServerTransport` as a route on
+    /// `builder` instead.
+    ///
+    /// Takes a `TransportContributor` — the witness WireOpenAPIGen already generates for the aggregate
+    /// proxy — so the unified path reuses the direct path's registration rather than duplicating it. The
+    /// generated `RouteContributor` conformance is therefore a single call.
+    public static func register<Builder: HTTPServerRouteBuilder>(
+        _ contributor: some TransportContributor,
+        on builder: inout Builder,
+        maximumBodySize: Int = 1_000_000
+    ) throws
+    where
+        // `SendableMetatype` on the context is one step stricter than the proposal requires, and is what
+        // keeps the per-route `@Sendable` closure warning-clean (spike-12's finding). The reader and
+        // sender already declare it on `HTTPServerRouteBuilder`.
+        Builder.RequestContext: ~Copyable & SendableMetatype,
+        Builder.Reader: ~Copyable,
+        Builder.ResponseSender: ~Copyable,
+        Builder.ResponseSender.Writer: ~Copyable
+    {
+        let collector = WireOpenAPIOperations()
+        // The handler and the body limit travel together so the terminal takes one value for "what to
+        // run" rather than two positional arguments.
+        try contributor.registerWireHandlers(on: collector)
+
+        for route in collector.operations {
+            let terminal = Terminal(handler: route.handler, maximumBodySize: maximumBodySize)
+            builder.register(method: route.method, path: route.path) { request, _, parameters, reader, sender in
+                try await invoke(
+                    terminal,
+                    request: request,
+                    metadata: ServerRequestMetadata(pathParameters: parameters),
+                    reader: reader,
+                    sender: sender
+                )
+            }
+        }
+    }
+
+    /// What a matched route runs: the generator's operation closure plus the collection limit applied to
+    /// both the request it reads and the response it writes.
+    private struct Terminal: Sendable {
+        let handler:
+            @Sendable (HTTPRequest, HTTPBody?, ServerRequestMetadata) async throws -> (
+                HTTPResponse, HTTPBody?
+            )
+        let maximumBodySize: Int
+    }
+
+    /// The terminal: proposal primitives in, the generator's closure in the middle, primitives out.
+    ///
+    /// The two currencies meet cleanly in one place — WireMVC's matched path parameters are already
+    /// `[String: Substring]`, exactly what `ServerRequestMetadata` carries, so that hand-off is a
+    /// pass-through with no conversion.
+    /// `nonisolated(nonsending)`: it runs on the caller's isolation rather than hopping to a concurrent
+    /// context, which is what lets a possibly-isolated `Reader`/`ResponseSender` conformance cross into
+    /// it. The proposal's own handler signatures are written the same way.
+    private static nonisolated(nonsending) func invoke<
+        Reader: AsyncReader & ~Copyable & SendableMetatype,
+        Sender: HTTPResponseSender & ~Copyable & SendableMetatype
+    >(
+        _ terminal: Terminal,
+        request: HTTPRequest,
+        metadata: ServerRequestMetadata,
+        reader: consuming Reader,
+        sender: consuming Sender
+    ) async throws
+    where
+        Reader.ReadElement == UInt8,
+        Reader.FinalElement == HTTPFields?,
+        Sender.Writer: ~Copyable
+    {
+        // The generator's closure takes an `HTTPBody?`, so the streaming reader is collected first. A
+        // one-shot collect (rather than a streaming bridge like `WireMVCServerTransport`'s) is enough
+        // while every operation is a typed, known-length request; streaming inbound bodies is a later
+        // refinement, and would follow the outbound bridge's rendezvous-channel shape.
+        let bytes = try await WireMVCRequest.collectBody(reader, maximumSize: terminal.maximumBodySize)
+        let body: HTTPBody? = bytes.isEmpty ? nil : HTTPBody(bytes)
+
+        let (response, responseBody) = try await terminal.handler(request, body, metadata)
+
+        // Send the generator's `HTTPResponse` verbatim rather than rebuilding it from a status: it
+        // carries the headers the operation's serializer set (`Content-Type`, and anything the spec
+        // declares), which a status-only outcome would drop.
+        if let responseBody {
+            let collected = try await [UInt8](collecting: responseBody, upTo: terminal.maximumBodySize)
+            var buffer = UniqueArray<UInt8>(copying: collected)
+            try await sender.sendAndFinish(response, buffer: &buffer)
+        } else {
+            try await sender.sendAndFinish(response)
+        }
+    }
+}
