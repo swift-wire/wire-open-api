@@ -30,7 +30,7 @@ public macro OpenAPIController() =
 /// separate `@Contributes`.
 public let wireOpenAPIControllerAlias = WireAdapterAnnotationV1(
     annotation: "OpenAPIController",
-    contributesTo: TransportKeys.handlers
+    capability: .contributes(to: TransportKeys.handlers)
 )
 
 extension WireOpenAPI {
