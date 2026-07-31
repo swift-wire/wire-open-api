@@ -11,10 +11,16 @@ let graph = try await Wire.bootstrap()
 let transport = RecordingTransport()
 try WireOpenAPI.apply(graph, to: transport)
 
-let recorded = transport.registered.withLock { $0 }
-precondition(recorded.count == 1, "expected 1 registered operation, got \(recorded.count)")
+// Two specs → two aggregate proxies → two contributors in the handlers key, each registering its own
+// document's operations.
+let recorded = transport.registered.withLock { $0 }.sorted { $0.path < $1.path }
+precondition(recorded.count == 2, "expected 2 registered operations, got \(recorded.count)")
 precondition(
     recorded[0].method == .get && recorded[0].path == "/ping",
+    "unexpected registration: \(recorded)"
+)
+precondition(
+    recorded[1].method == .get && recorded[1].path == "/pong",
     "unexpected registration: \(recorded)"
 )
 

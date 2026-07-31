@@ -4,10 +4,19 @@ import XCTest
 
 @testable import WireOpenAPIMacros
 
+/// `@OpenAPIController` is a marker: it expands to nothing. The conformance it used to generate moved to
+/// `WireOpenAPIGen`, which emits it on the plugin-synthesised aggregate proxy — the only place it can go
+/// once one proxy serves a whole spec, and the only place Swift permits it at all (`TransportContributor`
+/// refines `Sendable`, whose conformance must be in the type's own file).
+///
+/// What the attribute *directs* is exercised end-to-end by `WireOpenAPIExample`, which builds through the
+/// real plugin; there is nothing left for a macro-expansion test to assert beyond the marker being inert.
+/// The witness's access level, which these tests used to pin, is no longer a concern either: the proxy is
+/// emitted `internal` into the consumer module, so its witness never has to match a controller's access.
 final class OpenAPIControllerMacroTests: XCTestCase {
     private let macros: [String: any Macro.Type] = ["OpenAPIController": OpenAPIControllerMacro.self]
 
-    func testDefaultServerURL() {
+    func testMarkerExpandsToNothing() {
         assertMacroExpansion(
             """
             @OpenAPIController
@@ -15,69 +24,19 @@ final class OpenAPIControllerMacroTests: XCTestCase {
             """,
             expandedSource: """
                 struct TaskController {}
-
-                extension TaskController: TransportContributor {
-                    func registerWireHandlers(on transport: any ServerTransport) throws {
-                        try registerHandlers(on: transport)
-                    }
-                }
                 """,
             macros: macros
         )
     }
 
-    func testPackageAccessWitness() {
+    func testSpecFormExpandsToNothing() {
         assertMacroExpansion(
             """
-            @OpenAPIController
-            package struct TaskController {}
-            """,
-            expandedSource: """
-                package struct TaskController {}
-
-                extension TaskController: TransportContributor {
-                    package func registerWireHandlers(on transport: any ServerTransport) throws {
-                        try registerHandlers(on: transport)
-                    }
-                }
-                """,
-            macros: macros
-        )
-    }
-
-    func testPublicAccessWitness() {
-        assertMacroExpansion(
-            """
-            @OpenAPIController
+            @OpenAPIController(spec: "TaskAPI")
             public struct TaskController {}
             """,
             expandedSource: """
                 public struct TaskController {}
-
-                extension TaskController: TransportContributor {
-                    public func registerWireHandlers(on transport: any ServerTransport) throws {
-                        try registerHandlers(on: transport)
-                    }
-                }
-                """,
-            macros: macros
-        )
-    }
-
-    func testBasePath() {
-        assertMacroExpansion(
-            """
-            @OpenAPIController("/api/v1")
-            struct TaskController {}
-            """,
-            expandedSource: """
-                struct TaskController {}
-
-                extension TaskController: TransportContributor {
-                    func registerWireHandlers(on transport: any ServerTransport) throws {
-                        try registerHandlers(on: transport, serverURL: WireOpenAPI.serverURL(forBasePath: "/api/v1"))
-                    }
-                }
                 """,
             macros: macros
         )
