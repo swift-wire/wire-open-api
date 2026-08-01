@@ -33,7 +33,7 @@ where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields?, Sender.Wr
         next: (consuming NextInput) async throws -> Return
     ) async throws -> Return {
         let request = input.peekedRequest
-        WireOpenAPITrace.log("apikey: \(request.method.rawValue) \(request.path ?? "/")")
+        print("apikey: \(request.method.rawValue) \(request.path ?? "/")")
         return try await next(input)
     }
 }
@@ -61,7 +61,7 @@ where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields?, Sender.Wr
         input: consuming Input,
         next: (consuming NextInput) async throws -> Return
     ) async throws -> Return {
-        WireOpenAPITrace.log("audit: \(input.peekedRequest.path ?? "/")")
+        print("audit: \(input.peekedRequest.path ?? "/")")
         return try await next(input)
     }
 }

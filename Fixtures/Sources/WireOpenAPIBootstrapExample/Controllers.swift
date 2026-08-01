@@ -28,7 +28,7 @@ struct RequestIdentity: Sendable {
 
     @Inject init(seed: HTTPRequest) {
         self.path = seed.path ?? "/"
-        WireOpenAPITrace.log("scope: constructed for \(self.path)")
+        print("scope: constructed for \(self.path)")
     }
 }
 
