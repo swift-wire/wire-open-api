@@ -68,6 +68,8 @@ jobs:
           notfound=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/nope)
           # Unprefixed: must NOT be registered.
           unprefixed=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/tasks/42)
+          # A second operation, carrying route-scope @Middleware.
+          list=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/api/v1/tasks)
           kill "$pid" 2>/dev/null || true
           [ "$ok" = 1 ] || { echo "the fixture did not bind"; cat serverlog.txt; exit 1; }
           echo "GET /api/v1/tasks/42 → $openapi"
@@ -78,6 +80,22 @@ jobs:
           case "$mvc" in *'{"count":3}'*"[200]") ;; *) echo "the WireMVC route did not serve"; exit 1;; esac
           case "$notfound" in *"no route here"*"[404]") ;; *) echo "@NotFound did not fire"; exit 1;; esac
           [ "$unprefixed" = 404 ] || { echo "operation registered without its server prefix"; exit 1; }
+          case "$list" in *"[200]") ;; *) echo "the second operation did not serve"; exit 1;; esac
+
+          # @Middleware — the M6d.2 gate. One RequireAPIKey component, declared once, folding around an
+          # OpenAPI operation and an annotation-driven @Get alike; one Audit at route scope on a single
+          # operation. Asserted from the log because a middleware that silently does not run still
+          # produces a correct response — the failure this cannot be allowed to miss.
+          echo "=== middleware log ==="; grep -E '^apikey:|^audit:' serverlog.txt || true
+          grep -q '^apikey: GET /api/v1/tasks/42' serverlog.txt \
+            || { echo "controller-scope @Middleware did not run on the OpenAPI operation"; exit 1; }
+          grep -q '^apikey: GET /status/tasks' serverlog.txt \
+            || { echo "the same @Middleware component did not run on the WireMVC route"; exit 1; }
+          grep -q '^audit: /api/v1/tasks$' serverlog.txt \
+            || { echo "route-scope @Middleware did not run on its operation"; exit 1; }
+          # Route scope must not leak to the controller's other operations.
+          grep -q '^audit: /api/v1/tasks/42' serverlog.txt \
+            && { echo "route-scope @Middleware leaked onto another operation"; exit 1; } || true
 
   SwiftFormat:
     name: swift-format (6.4 toolchain)

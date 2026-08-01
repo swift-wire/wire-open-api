@@ -20,20 +20,7 @@ import Yams
 // Each proxy gets BOTH conformances, unconditionally. `RouteContributor` is what the proxy is collated
 // as — operations are routes, serving under the same router, `@NotFound`, error tiers and composition
 // root as annotation-driven ones. `TransportContributor` is the shape `registerHandlers` needs, used by
-// the route registration itself and by `WireOpenAPI.apply`'s direct-mount convenience.
-
-/// One `@OpenAPIController` use-site: the controller's type name and the group (`spec:`) it declares.
-/// The group matches swift-wire's `.contributesAggregateProxy(groupedByAttribute: "spec")`, so the proxy
-/// this tool writes an extension on is named for the same value.
-struct DiscoveredController {
-    let typeName: String
-    let spec: String?
-    /// The verbatim argument of each type-level `@Middleware`, in source order — controller-scope
-    /// middleware, folded around every one of this controller's operations.
-    let middleware: [String]
-    let file: String
-    let line: Int
-}
+// the route registration itself, which replays it against a collecting transport.
 
 // MARK: - argument parsing
 
@@ -64,84 +51,7 @@ while index < arguments.count {
     index += 1
 }
 
-// MARK: - discovery
-
-/// Collect every `@OpenAPIController` declaration, with the `spec:` group it names.
-final class ControllerScanner: SyntaxVisitor {
-    private(set) var controllers: [DiscoveredController] = []
-    private let file: String
-    private let converter: SourceLocationConverter
-
-    init(file: String, tree: SourceFileSyntax) {
-        self.file = file
-        self.converter = SourceLocationConverter(fileName: file, tree: tree)
-        super.init(viewMode: .sourceAccurate)
-    }
-
-    override func visit(_ node: StructDeclSyntax) -> SyntaxVisitorContinueKind {
-        record(name: node.name.text, attributes: node.attributes, at: node.name)
-        return .visitChildren
-    }
-
-    override func visit(_ node: ClassDeclSyntax) -> SyntaxVisitorContinueKind {
-        record(name: node.name.text, attributes: node.attributes, at: node.name)
-        return .visitChildren
-    }
-
-    override func visit(_ node: ActorDeclSyntax) -> SyntaxVisitorContinueKind {
-        record(name: node.name.text, attributes: node.attributes, at: node.name)
-        return .visitChildren
-    }
-
-    /// The argument of each `@Middleware` on a declaration, in source order. Wire has already lifted the
-    /// matching value onto the aggregate proxy — a method-level `@Middleware` hoists to its enclosing type
-    /// (BindingDiscovery), and the proxy synthesis reattributes each subject's input edges onto the
-    /// aggregate — so this only has to name the field the fold reads.
-    private func middlewareArguments(of attributes: AttributeListSyntax) -> [String] {
-        var arguments: [String] = []
-        for element in attributes {
-            guard let attribute = element.as(AttributeSyntax.self),
-                attribute.attributeName.trimmedDescription == "Middleware",
-                case .argumentList(let list) = attribute.arguments,
-                let first = list.first
-            else { continue }
-            arguments.append(first.expression.trimmedDescription)
-        }
-        return arguments
-    }
-
-    private func record(name: String, attributes: AttributeListSyntax, at token: TokenSyntax) {
-        for element in attributes {
-            guard let attribute = element.as(AttributeSyntax.self),
-                attribute.attributeName.trimmedDescription == "OpenAPIController"
-            else { continue }
-            var spec: String?
-            if case .argumentList(let list) = attribute.arguments {
-                for argument in list where argument.label?.text == "spec" {
-                    spec = argument.expression.as(StringLiteralExprSyntax.self)?.representedLiteralValue
-                }
-            }
-            controllers.append(
-                DiscoveredController(
-                    typeName: name,
-                    spec: spec,
-                    middleware: middlewareArguments(of: attributes),
-                    file: file,
-                    line: converter.location(for: token.position).line
-                )
-            )
-        }
-    }
-}
-
-var discovered: [DiscoveredController] = []
-for path in sourcePaths {
-    guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else { continue }
-    let tree = Parser.parse(source: contents)
-    let scanner = ControllerScanner(file: path, tree: tree)
-    scanner.walk(tree)
-    discovered.append(contentsOf: scanner.controllers)
-}
+let discovered = discoverControllers(in: sourcePaths)
 
 // MARK: - grouping
 
@@ -181,93 +91,16 @@ for (spec, controllers) in byGroup where controllers.count > 1 {
     exit(1)
 }
 
-// MARK: - proxy field names
-
-// The fields a `@Middleware` fold reads are emitted by **swift-wire**, so these rules have to match its
-// `.injectsFromGraph` pass — and they match wire-mvc's `RouteCodegen` copies, which derive them the same
-// way. Three derivations of one contract is two too many; the rules belong in swift-wire, which owns the
-// emission, with both adapters reading them. Until then the compiler is the check: a mismatch is a
-// "no member" error at the fold, exactly as the `_wireSubject` handshake is.
-
-/// `_wire` + the simple (generics- and namespace-stripped) type name, upper-cameled —
-/// `Mod.RequireAPIKey<…>` → `_wireRequireAPIKey`.
-func dependencyPropertyName(forType type: String) -> String {
-    let withoutGenerics = type.prefix { $0 != "<" }
-    let simple = withoutGenerics.split(separator: ".").last.map(String.init) ?? String(withoutGenerics)
-    return "_wire" + simple.prefix(1).uppercased() + simple.dropFirst()
-}
-
-/// A key reference reduced to an identifier fragment — `Keys.audit` → `Keys_audit`.
-func sanitizedKeyFragment(_ key: String) -> String {
-    String(key.map { $0.isLetter || $0.isNumber ? $0 : "_" })
-}
-
-// MARK: - the server prefix
-
-/// How the witness should spell `registerHandlers`' `serverURL:` argument, read from the document's
-/// `servers:` block.
-///
-/// It cannot be defaulted away. `registerHandlers`' own default is `.defaultOpenAPIServerURL`, which is
-/// literally `/` — *not* the document's server — so an operation under `servers: [{url: /api/v1}]` would
-/// register at `/tasks/{id}` and 404 at the path the spec describes. (Found by serving it.) The
-/// generator emits the document's servers as `Servers.ServerN.url()`, so the witness names the first.
-enum ServerPrefix {
-    /// No `servers:` block: the generator emits an empty `enum Servers {}`, so naming a server would not
-    /// compile. `registerHandlers`' default is then correct — the document describes no prefix.
-    case none
-    /// One distinct path prefix across the document's servers — name it.
-    case server1
-}
-
-/// Resolve the prefix, or exit with a diagnostic when the document's servers disagree.
-///
-/// Several `servers:` entries are ordinary (prod/staging), and harmless here *as long as their path
-/// components agree*: registration uses only the path, so alternatives differing by host register
-/// identically. Entries with **different paths** have no single answer — picking the first would
-/// silently serve some environments' routes at the wrong prefix — so that is an error rather than a
-/// guess.
-func resolveServerPrefix(specPaths: [String]) -> ServerPrefix {
-    // A target's controllers may live apart from the document that describes them (a spec module and an
-    // app module), in which case there is nothing to read and the default applies.
-    guard specPaths.count == 1, let path = specPaths.first,
-        let contents = try? String(contentsOfFile: path, encoding: .utf8),
-        // `Yams.load` returns `Any?`; casting the optional itself rather than its contents silently
-        // yields nothing, which is how this first read as "no servers declared".
-        let loaded = ((try? Yams.load(yaml: contents)) ?? nil),
-        let document = loaded as? [String: Any]
-    else { return .none }
-
-    let servers = (document["servers"] as? [[String: Any]] ?? []).compactMap { $0["url"] as? String }
-    guard !servers.isEmpty else { return .none }
-
-    // Compare path components only: `https://prod.example.com/v1` and `https://staging.example.com/v1`
-    // register identically.
-    let prefixes = Set(servers.map { URL(string: $0)?.path ?? $0 })
-    guard prefixes.count == 1 else {
-        let listed = servers.sorted().joined(separator: ", ")
-        FileHandle.standardError.write(
-            Data(
-                """
-                \(path): error: the document declares servers with different paths (\(listed)). \
-                Operations register under one prefix, so there is no single answer — give the servers a \
-                common path, or split the document.
-
-                """.utf8
-            )
-        )
-        exit(1)
-    }
-    return .server1
-}
-
+// What the document says: the prefix operations register under, and where each operationId lands.
 let serverPrefix = resolveServerPrefix(specPaths: specPaths)
+let operationRoutes = resolveOperationRoutes(specPaths: specPaths)
 
 // MARK: - emission
 
 // `WireOpenAPI` and `OpenAPIRuntime` are always needed (the conformance and its `ServerTransport`
 // parameter); a Wire-aware dependency may name either, so the set is deduplicated rather than appended —
 // a repeated import compiles but reads like a codegen bug.
-let allImports = Set(["OpenAPIRuntime", "WireMVC", "WireOpenAPI"] + imports).sorted()
+let allImports = Set(["Foundation", "OpenAPIRuntime", "WireMVC", "WireOpenAPI"] + imports).sorted()
 var lines: [String] = ["// Generated by WireOpenAPIGen — do not edit.", ""]
 lines += allImports.map { "import \($0)" }
 lines.append("")
@@ -286,42 +119,120 @@ for (spec, controllers) in byGroup.sorted(by: { $0.key < $1.key }) {
     // type, a `FactoryKey` a synthesised factory whose `create` is specialised at the builder's box
     // roles. Same spelling WireMVC's route codegen uses, so one `@Middleware(RequireAPIKey.self)`
     // component serves an operation and a `@Get` alike.
-    let foldEntries = controller.middleware.map { argument -> String in
-        if argument.hasSuffix(".self") {
-            return "            self.\(dependencyPropertyName(forType: String(argument.dropLast(5))))"
+    func foldEntries(_ arguments: [String], indent: String) -> [String] {
+        arguments.map { argument in
+            if argument.hasSuffix(".self") {
+                return indent + "self.\(dependencyPropertyName(forType: String(argument.dropLast(5))))"
+            }
+            return indent + "self._wireFactory_\(sanitizedKeyFragment(argument))"
+                + ".create(Builder.RequestContext.self, Builder.Reader.self, Builder.ResponseSender.self)"
         }
-        return
-            "            self._wireFactory_\(sanitizedKeyFragment(argument))"
-            + ".create(Builder.RequestContext.self, Builder.Reader.self, Builder.ResponseSender.self)"
     }
-    let closureSignature: String
-    let terminal: String
-    if foldEntries.isEmpty {
-        closureSignature = " request, _, parameters, reader, sender in"
-        terminal = """
-                        try await WireOpenAPIRoutes.invoke(
-                            wireOpenAPIRoute, request: request, pathParameters: parameters,
-                            reader: reader, sender: sender
-                        )
+
+    // Controller-scope entries fold *outside* route-scope ones, matching WireMVC's ordering
+    // (controller-outer → route-inner → handler).
+    let controllerEntries = foldEntries(controller.middleware, indent: "            ")
+
+    // Route-scope middleware needs each method matched to the route its operation registers as. The
+    // collector reports only (method, path), so the document supplies the mapping — and a method whose
+    // operationId the document doesn't declare is an error rather than middleware that silently never
+    // runs, which is the failure the marker exists to prevent.
+    var routeCases: [(route: OperationRoute, entries: [String])] = []
+    for operation in controller.operations where !operation.middleware.isEmpty {
+        guard let route = operationRoutes[operation.operationID] else {
+            FileHandle.standardError.write(
+                Data(
+                    """
+                    \(controller.file):\(controller.line): error: @RawOperation \
+                    '\(operation.operationID)' carries @Middleware but the document declares no such \
+                    operationId. Name the operation it implements — @RawOperation("the-id") — or remove \
+                    the middleware.
+
+                    """.utf8
+                )
+            )
+            exit(1)
+        }
+        routeCases.append((route: route, entries: foldEntries(operation.middleware, indent: "                    ")))
+    }
+    /// One `builder.register` call, wrapped in `entries` if there are any. The fold is emitted inline
+    /// rather than hoisted because `wireCompose` returns the chain's concrete composed type — the thing
+    /// that lets the terminal read the final box's contents.
+    func registerBlock(entries: [String], indent: String) -> String {
+        guard !entries.isEmpty else {
+            return """
+                \(indent)builder.register(method: wireOpenAPIRoute.method, path: wireOpenAPIRoute.path) { request, _, parameters, reader, sender in
+                \(indent)    try await WireOpenAPIRoutes.invoke(
+                \(indent)        wireOpenAPIRoute, request: request, pathParameters: parameters,
+                \(indent)        reader: reader, sender: sender
+                \(indent)    )
+                \(indent)}
+                """
+        }
+        return """
+            \(indent)builder.register(method: wireOpenAPIRoute.method, path: wireOpenAPIRoute.path) {
+            \(indent)    request, requestContext, parameters, reader, responseSender in
+            \(indent)    let wireOpenAPIBox = RequestResponseMiddlewareBox.pending(
+            \(indent)        request: request, requestContext: requestContext, reader: reader,
+            \(indent)        responseSender: responseSender
+            \(indent)    )
+            \(indent)    let wireOpenAPIChain = wireCompose {
+            \(entries.joined(separator: "\n"))
+            \(indent)    }
+            \(indent)    try await wireOpenAPIChain.intercept(input: wireOpenAPIBox) { wireOpenAPIFinalBox in
+            \(indent)        try await wireOpenAPIFinalBox.withPendingContents { request, _, reader, responseSender in
+            \(indent)            try await WireOpenAPIRoutes.invoke(
+            \(indent)                wireOpenAPIRoute, request: request, pathParameters: parameters,
+            \(indent)                reader: reader, sender: responseSender
+            \(indent)            )
+            \(indent)        }
+            \(indent)    }
+            \(indent)}
             """
+    }
+
+    // With no route-scope middleware every operation takes the same chain, so one register call in the
+    // loop suffices. With it, operations differ, and each needs its own fold — hence a switch on the
+    // route the document says the operation registers as.
+    let registrations: String
+    var unmatchedDeclaration = ""
+    var unmatchedCheck = ""
+    if routeCases.isEmpty {
+        registrations = registerBlock(entries: controllerEntries, indent: "            ")
     } else {
-        closureSignature = " request, requestContext, parameters, reader, responseSender in"
-        terminal = """
-                        let wireOpenAPIBox = RequestResponseMiddlewareBox.pending(
-                            request: request, requestContext: requestContext, reader: reader,
-                            responseSender: responseSender
+        var branches: [String] = []
+        for entry in routeCases {
+            branches.append("            case (\"\(entry.route.method)\", \"\(entry.route.path)\"):")
+            branches.append(
+                "                wireOpenAPIUnmatched.remove(\"\(entry.route.method) \(entry.route.path)\")"
+            )
+            branches.append(registerBlock(entries: controllerEntries + entry.entries, indent: "                "))
+        }
+        branches.append("            default:")
+        branches.append(registerBlock(entries: controllerEntries, indent: "                "))
+        let declared = routeCases.map { "\"\($0.route.method) \($0.route.path)\"" }
+        registrations = """
+                    switch (wireOpenAPIRoute.method.rawValue, wireOpenAPIRoute.path) {
+            \(branches.joined(separator: "\n"))
+                    }
+            """
+        // Guard the composition: this package derives the registered path from the document, while the
+        // generated `registerHandlers` derives it inside `apiPathComponentsWithServerPrefix`. If those
+        // ever disagree the switch quietly takes `default` and the route's middleware vanishes, so the
+        // witness fails at startup instead, naming what would have been dropped.
+        unmatchedDeclaration = "        var wireOpenAPIUnmatched: Set<String> = [\(declared.joined(separator: ", "))]"
+        // The description is written to stderr before the throw. Registration happens after the server is
+        // constructed, so an error thrown out of the generated `@main` races the server's teardown — NIO
+        // traps on its leaking promise first and the error is never printed. A misconfiguration the
+        // developer cannot see is barely better than one that fails silently.
+        unmatchedCheck = """
+                    if !wireOpenAPIUnmatched.isEmpty {
+                        let wireOpenAPIError = WireOpenAPIRoutes.RouteMismatch(
+                            operations: wireOpenAPIUnmatched.sorted()
                         )
-                        let wireOpenAPIChain = wireCompose {
-            \(foldEntries.joined(separator: "\n"))
-                        }
-                        try await wireOpenAPIChain.intercept(input: wireOpenAPIBox) { wireOpenAPIFinalBox in
-                            try await wireOpenAPIFinalBox.withPendingContents { request, _, reader, responseSender in
-                                try await WireOpenAPIRoutes.invoke(
-                                    wireOpenAPIRoute, request: request, pathParameters: parameters,
-                                    reader: reader, sender: responseSender
-                                )
-                            }
-                        }
+                        FileHandle.standardError.write(Data((wireOpenAPIError.description + "\\n").utf8))
+                        throw wireOpenAPIError
+                    }
             """
     }
 
@@ -352,11 +263,11 @@ for (spec, controllers) in byGroup.sorted(by: { $0.key < $1.key }) {
                 Builder.ResponseSender: ~Copyable,
                 Builder.ResponseSender.Writer: ~Copyable
             {
+        \(unmatchedDeclaration)
                 for wireOpenAPIRoute in try WireOpenAPIRoutes.operations(of: self) {
-                    builder.register(method: wireOpenAPIRoute.method, path: wireOpenAPIRoute.path) {\(closureSignature)
-        \(terminal)
-                    }
+        \(registrations)
                 }
+        \(unmatchedCheck)
             }
         }
         """

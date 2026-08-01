@@ -37,3 +37,31 @@ where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields?, Sender.Wr
         return try await next(input)
     }
 }
+
+/// A second component, applied at **route** scope to one operation only — the check that the two tiers
+/// are distinguishable: `audit:` must appear for `listTasks` and not for `getTask`.
+enum AuditKeys {
+    static let factory = FactoryKey()
+}
+
+@Factory(AuditKeys.factory)
+@MiddlewareFactory
+struct Audit<
+    Ctx: HTTPServerCapability.RequestContext & ~Copyable,
+    Reader: AsyncReader & ~Copyable,
+    Sender: HTTPResponseSender & ~Copyable
+>: Middleware
+where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields?, Sender.Writer: ~Copyable {
+    typealias Input = RequestResponseMiddlewareBox<Ctx, Reader, Sender>
+    typealias NextInput = Input
+
+    @Inject init() {}
+
+    func intercept<Return: ~Copyable>(
+        input: consuming Input,
+        next: (consuming NextInput) async throws -> Return
+    ) async throws -> Return {
+        print("audit: \(input.peekedRequest.path ?? "/")")
+        return try await next(input)
+    }
+}

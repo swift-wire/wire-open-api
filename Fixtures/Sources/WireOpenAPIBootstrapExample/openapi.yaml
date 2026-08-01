@@ -21,6 +21,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Task'
+  /tasks:
+    get:
+      operationId: listTasks
+      responses:
+        '200':
+          description: Task ids
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
 components:
   schemas:
     Task:
