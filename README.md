@@ -30,7 +30,7 @@ for the full design.
 
 Not swift-wire's `WireBuildPlugin`. The adapter's plugin runs both tools over one source
 set: `WireGen` for the graph and the contributor-proxy structs, then `WireOpenAPIGen` for
-those proxies' `TransportContributor` witnesses.
+those proxies' `RouteContributor` witnesses.
 
 ```swift
 .executableTarget(
@@ -44,9 +44,9 @@ those proxies' `TransportContributor` witnesses.
 ```
 
 `@OpenAPIController` is a marker; it generates nothing. Controllers sharing a spec collate
-onto **one** proxy, because the generator emits `registerHandlers` once per document and
-registers every operation from a single handler — so one conformer per spec is the only
-shape that registers each operation once. An app serving several documents names them:
+onto **one** proxy: a document's operations are implemented against one generated
+`APIProtocol`, so one conformer per spec mounts each operation exactly once. An app serving
+several documents names them:
 
 ```swift
 @Singleton @OpenAPIController(spec: "TaskAPI")
@@ -54,11 +54,26 @@ struct TaskController: APIProtocol { … }
 ```
 
 With a single spec the bare `@OpenAPIController` groups everything together. There is no
-base-path argument: the prefix belongs to the document's `servers:` block, which
-`registerHandlers` already reads.
+base-path argument: the prefix belongs to the document's `servers:` block, applied by the
+runtime's own `apiPathComponentsWithServerPrefix`.
 
-Splitting one spec across several controllers is rejected for now — it needs the proxy to
-implement `APIProtocol` and dispatch per operation, which is later M6d work.
+Splitting one spec across several controllers is rejected for now. Per-operation dispatch
+removes the reason it was ever a constraint, but the conformer still holds a single
+subject; lifting it is the remaining M6d work.
+
+## Requires a forked swift-openapi-generator, for now
+
+Operations are dispatched by calling the generated per-operation method on a
+`UniversalServer` built for the request. Stock swift-openapi-generator emits that extension
+`fileprivate`, so it needs a one-line change (`ServerTranslator.swift`,
+`accessModifier: .fileprivate` → `nil`) — `internal` is sufficient, because `WireOpenAPIGen`
+emits into the same module. Until that lands upstream, consumers point at
+[the fork](https://github.com/tachyonics/swift-openapi-generator/tree/swift-wire).
+
+The alternative is to keep one registration and reach the request's subject through a
+task-local, which works on a stock generator. It measured equal at p50 and worse in mean
+and p99, and it costs the whole collecting-transport machinery, so main does not carry it —
+see the `m6d-request-scope-strategies` branch.
 
 ## Status
 

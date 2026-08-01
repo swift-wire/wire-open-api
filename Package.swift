@@ -3,14 +3,13 @@ import CompilerPluginSupport
 import PackageDescription
 
 // WireOpenAPI — a cross-runtime Wire adapter for swift-openapi-generator. It collates
-// `@OpenAPIController` controllers into a handlers key, has Wire emit a `TransportComposable`
-// conformance on the generated graph, and registers the collated handlers onto a user-owned
-// `some ServerTransport` that stays outside the graph. Depends only on OpenAPIRuntime — no
-// HTTP framework — so a wired controller mounts on Hummingbird, Vapor, or Lambda unchanged.
+// `@OpenAPIController` controllers onto one aggregate proxy per spec and mounts that spec's operations
+// as WireMVC routes, so an operation serves under the same router, `@NotFound`, error tiers and
+// composition root as an annotation-driven `@Get`.
 //
-// Depends on pushed swift-wire main. `WireOpenAPIExample` is the runnable end-to-end
-// validation — it applies swift-wire's build plugin, wiring an `@OpenAPIController` controller
-// onto a recording transport.
+// Depends on pushed swift-wire main. The end-to-end validation lives in the `Fixtures` package, which
+// runs the real swift-openapi-generator and serves over HTTP — the stand-in example that used to sit
+// here proved less than the fixture does and could not survive per-operation dispatch.
 let package = Package(
     name: "wire-open-api",
     platforms: [.macOS(.v26)],
@@ -83,23 +82,6 @@ let package = Package(
                 "WireOpenAPIGen",
                 .product(name: "WireGen", package: "swift-wire"),
             ]
-        ),
-        .executableTarget(
-            name: "WireOpenAPIExample",
-            dependencies: [
-                "WireOpenAPI",
-                // Direct, not transitive: Wire activates a dependency's bindings and keys only when the
-                // consumer depends on it directly, and `WireMVCKeys.routeContributors` — the key
-                // `@OpenAPIController` now collates into — is declared in WireMVC.
-                .product(name: "WireMVC", package: "wire-mvc"),
-                // Serving the collated routes on a foreign transport — the same call a WireMVC app
-                // makes. Behind wire-mvc's `ServerTransport` trait, enabled on the dependency above.
-                .product(name: "WireMVCServerTransport", package: "wire-mvc"),
-                .product(name: "Wire", package: "swift-wire"),
-                .product(name: "OpenAPIRuntime", package: "swift-openapi-runtime"),
-                .product(name: "HTTPTypes", package: "swift-http-types"),
-            ],
-            plugins: [.plugin(name: "WireOpenAPIBuildPlugin")]
         ),
         .testTarget(
             name: "WireOpenAPIMacrosTests",

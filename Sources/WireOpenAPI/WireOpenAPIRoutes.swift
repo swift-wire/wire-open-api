@@ -16,53 +16,21 @@ public import WireMVC
 /// decodes `Input` and encodes `Output`, so `@JSONBody`'s content-type rules and WireMVC's own decoding
 /// stay separate concerns. Only the registration boundary moves.
 public enum WireOpenAPIRoutes {
-    /// Thrown at registration when an operation carrying route-scope `@Middleware` never matched a route
-    /// the generator actually registered.
-    ///
-    /// The match is by `(method, path)`, and the path is composed by *this* package — the document's
-    /// `paths:` key under its `servers:` prefix — while the real one is composed by
-    /// `apiPathComponentsWithServerPrefix` inside the generated `registerHandlers`. Two derivations of one
-    /// rule, so they can disagree. If they ever do, the switch falls through to the default branch and the
-    /// route's middleware is silently dropped; this turns that into a startup failure naming the
-    /// operations affected.
-    public struct RouteMismatch: Error, CustomStringConvertible {
-        public let operations: [String]
-
-        /// Public because the generated witness constructs it.
-        public init(operations: [String]) { self.operations = operations }
-
-        public var description: String {
-            """
-            WireOpenAPI: route-scope @Middleware was declared for \(operations.joined(separator: ", ")) \
-            but no registered route matched. The path this package composed from the document does not \
-            match the one the generated registerHandlers used, so the middleware would not have run.
-            """
-        }
-    }
-
-    public typealias Operation = WireOpenAPIOperations.Operation
-
-    /// Every operation `contributor` would have registered on a `ServerTransport`, captured instead.
-    ///
-    /// Registration itself is emitted by `WireOpenAPIGen` rather than performed here, because a
-    /// `@Middleware` fold has to be **witness-local**: `wireCompose` returns the chain's *concrete*
-    /// composed type, which is what lets the terminal call `withPendingContents` on the fold's final box.
-    /// A runtime helper would have to erase it and could not. So this collects, the generated witness
-    /// loops, and each route is registered with its own fold around `invoke`.
-    public static func operations(of contributor: some TransportContributor) throws -> [Operation] {
-        let collector = WireOpenAPIOperations()
-        try contributor.registerWireHandlers(on: collector)
-        return collector.operations
-    }
-
     /// The terminal a generated witness calls, inside the fold. Takes the box's already-projected
     /// contents rather than the raw handler arguments, since with middleware the reader and sender reach
     /// it through `withPendingContents`.
+    ///
+    /// The handler is supplied by the caller rather than looked up here: it is a call to the operation's
+    /// own method on a `UniversalServer` the generated witness built for this request, which is what
+    /// keeps a request-scoped subject out of ambient state.
     public static nonisolated(nonsending) func invoke<
         Reader: AsyncReader & ~Copyable & SendableMetatype,
         Sender: HTTPResponseSender & ~Copyable & SendableMetatype
     >(
-        _ operation: Operation,
+        handler:
+            @escaping @Sendable (HTTPRequest, HTTPBody?, ServerRequestMetadata) async throws -> (
+                HTTPResponse, HTTPBody?
+            ),
         request: HTTPRequest,
         pathParameters: [String: Substring],
         reader: consuming Reader,
@@ -75,7 +43,7 @@ public enum WireOpenAPIRoutes {
         Sender.Writer: ~Copyable
     {
         try await invoke(
-            Terminal(handler: operation.handler, maximumBodySize: maximumBodySize),
+            Terminal(handler: handler, maximumBodySize: maximumBodySize),
             request: request,
             metadata: ServerRequestMetadata(pathParameters: pathParameters),
             reader: reader,

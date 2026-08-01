@@ -16,6 +16,15 @@ import SwiftSyntax
 struct DiscoveredOperation {
     let operationID: String
     let middleware: [String]
+    /// The method's own name, and its input and output types **exactly as written**.
+    ///
+    /// Copying the spellings verbatim is what keeps the forwarding conformance free of the generator's
+    /// safe-name transform: the forwarder is declared with the same types the user already wrote, so the
+    /// codegen never has to derive `Operations.GetTask.Input` from the operationId `getTask` — a
+    /// derivation that is identity for some specs and not others.
+    let methodName: String
+    let inputType: String
+    let outputType: String
 }
 
 struct DiscoveredController {
@@ -26,6 +35,9 @@ struct DiscoveredController {
     let middleware: [String]
     /// The controller's `@RawOperation` methods, in source order.
     let operations: [DiscoveredOperation]
+    /// The `@Scoped(seed:)` seed type, if the controller is request-scoped — in which case the aggregate
+    /// bridges into its scope per request instead of holding it.
+    let seed: String?
     let file: String
     let line: Int
 }
@@ -63,6 +75,21 @@ final class ControllerScanner: SyntaxVisitor {
     /// matching value onto the aggregate proxy — a method-level `@Middleware` hoists to its enclosing type
     /// (BindingDiscovery), and the proxy synthesis reattributes each subject's input edges onto the
     /// aggregate — so this only has to name the field the fold reads.
+    /// The `@Scoped(seed: X.self)` seed, or `nil` for an app-scoped controller.
+    private func seedType(of attributes: AttributeListSyntax) -> String? {
+        for element in attributes {
+            guard let attribute = element.as(AttributeSyntax.self),
+                attribute.attributeName.trimmedDescription == "Scoped",
+                case .argumentList(let list) = attribute.arguments
+            else { continue }
+            for argument in list where argument.label?.text == "seed" {
+                let expression = argument.expression.trimmedDescription
+                return expression.hasSuffix(".self") ? String(expression.dropLast(5)) : expression
+            }
+        }
+        return nil
+    }
+
     private func middlewareArguments(of attributes: AttributeListSyntax) -> [String] {
         var arguments: [String] = []
         for element in attributes {
@@ -95,14 +122,36 @@ final class ControllerScanner: SyntaxVisitor {
                 }
             }
             guard let operationID else { continue }
+            let parameters = function.signature.parameterClause.parameters
+            guard parameters.count == 1, let parameter = parameters.first,
+                let returnType = function.signature.returnClause?.type
+            else {
+                diagnose(
+                    "@RawOperation '\(operationID)' must take the operation's generated Input and return "
+                        + "its Output — that is the shape the generated operation method dispatches to.",
+                    at: function.name
+                )
+                continue
+            }
             found.append(
                 DiscoveredOperation(
                     operationID: operationID,
-                    middleware: middlewareArguments(of: function.attributes)
+                    middleware: middlewareArguments(of: function.attributes),
+                    methodName: function.name.text,
+                    inputType: parameter.type.trimmedDescription,
+                    outputType: returnType.trimmedDescription
                 )
             )
         }
         return found
+    }
+
+    /// Report and exit — a malformed `@RawOperation` cannot produce a forwarder, and continuing would
+    /// emit an incomplete conformance whose error points at generated code instead of the method.
+    private func diagnose(_ message: String, at token: TokenSyntax) {
+        let line = converter.location(for: token.position).line
+        FileHandle.standardError.write(Data("\(file):\(line): error: \(message)\n".utf8))
+        exit(1)
     }
 
     private func record(
@@ -127,6 +176,7 @@ final class ControllerScanner: SyntaxVisitor {
                     spec: spec,
                     middleware: middlewareArguments(of: attributes),
                     operations: operations(in: members),
+                    seed: seedType(of: attributes),
                     file: file,
                     line: converter.location(for: token.position).line
                 )
