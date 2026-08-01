@@ -3,7 +3,8 @@ import Wire
 import WireMVC
 import WireOpenAPI
 
-// The whole point of the fixture: two controllers, two authoring styles, **one router**.
+// The whole point of the fixture: two authoring styles, **one router** — and, within the spec-driven
+// style, two controllers sharing one document at two different scopes.
 //
 // `TaskController` implements the generated `APIProtocol` — the spec is the source of truth for its
 // routing, and swift-openapi-generator owns its decoding and encoding. `StatusController` is an
@@ -36,7 +37,11 @@ struct RequestIdentity: Sendable {
 
 /// `@OpenAPIController` marks it; the plugin collates it onto `_WireOpenAPIContributor_Tasks`, which
 /// carries the `RouteContributor` conformance. No base path here — the prefix is the document's
-/// `servers:` entry (`/api/v1`), which `registerHandlers` reads.
+/// `servers:` entry (`/api/v1`), applied by `apiPathComponentsWithServerPrefix`.
+///
+/// It implements **part** of the document. `TaskListController` below implements the rest, and the two
+/// collate onto one proxy: operations are mounted individually, so a spec is no longer one object's to
+/// serve. `APIProtocol` conformance is what checks the halves add up.
 @Scoped(seed: HTTPRequest.self)
 @OpenAPIController(spec: "Tasks")
 @Middleware(RequireAPIKeyKeys.factory)
@@ -53,12 +58,26 @@ struct TaskController {
         )
     }
 
-    /// Route-scope middleware: `Audit` folds around this operation only, inside the controller's
-    /// `RequireAPIKey`. `@RawOperation` is what ties the method to the document's `listTasks`.
+}
+
+/// The other half of the same document — and **app-scoped**, where `TaskController` is request-scoped.
+/// Scoping is decided per controller, so a request reaching `getTask` builds a `RequestIdentity` while one
+/// reaching `listTasks` enters no scope at all.
+///
+/// It also declares **no** controller-scope `@Middleware`, which is the check that a group's controllers
+/// do not share a fold: `RequireAPIKey` must run for `getTask` and not for `listTasks`. Both still reach
+/// the same app-scoped `TaskStore`, so one graph sits behind the whole spec.
+@Singleton
+@OpenAPIController(spec: "Tasks")
+struct TaskListController {
+    @Inject let store: TaskStore
+
+    /// Route-scope middleware: `Audit` folds around this operation only. `@RawOperation` is what ties the
+    /// method to the document's `listTasks`.
     @RawOperation
     @Middleware(AuditKeys.factory)
     func listTasks(_ input: Operations.ListTasks.Input) async throws -> Operations.ListTasks.Output {
-        .ok(.init(body: .json(["1", "2", "3"])))
+        .ok(.init(body: .json((1...store.count).map(String.init))))
     }
 }
 

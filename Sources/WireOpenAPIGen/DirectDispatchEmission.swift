@@ -10,8 +10,13 @@ import Foundation
 //
 // The generated per-operation methods on `UniversalServer` — which hold the only copy of an operation's
 // deserializer/serializer pair — remove the problem: build a `UniversalServer` once, and per request copy
-// it and point its `handler` at a conformer holding *this* request's subject. One struct copy, no
+// it and point its `handler` at a conformer holding *this* request's subjects. One struct copy, no
 // registration, no ambient state, and cost independent of how many operations the document declares.
+//
+// Dispatching per operation is also what lets several controllers share one document. Nothing here
+// registers a whole spec from a single object any more: each operation is mounted individually and
+// forwarded to the controller that declared it, and `APIProtocol` conformance is what makes the compiler
+// check the set is complete.
 //
 // The catch is access: stock swift-openapi-generator emits that extension `fileprivate`, so nothing
 // outside its own `Server.swift` can call it. This needs it `internal` — a one-line change in
@@ -24,26 +29,57 @@ import Foundation
 struct DirectDispatchEmitter {
     let spec: String
     let proxy: String
-    let controller: DiscoveredController
-    /// The request-scoped controller of this group, if it has one. Its presence is what decides whether a
-    /// request needs its own conformer at all.
-    let scoped: DiscoveredController?
-    let controllerEntries: [String]
+    /// Every `@OpenAPIController` sharing this spec, in discovery order. Each contributes the operations
+    /// it declares and its own controller-scope `@Middleware`; scoping is decided per controller, so a
+    /// group may mix request-scoped and app-scoped ones.
+    let controllers: [DiscoveredController]
     let operationRoutes: [String: OperationRoute]
     let serverPrefix: ServerPrefix
     let foldEntries: ([String], String) -> [String]
 
-    /// The per-request conformer's type name. Only emitted for a request-scoped group; app-scoped, the
-    /// aggregate proxy conforms directly.
+    /// The per-request conformer's type name. Only emitted when some controller is request-scoped;
+    /// otherwise the aggregate proxy conforms directly, holding every subject as a field.
     var conformer: String { "_WireOpenAPIRequest_\(sanitizedKeyFragment(spec))" }
 
     var serverURLArgument: String {
         serverPrefix == .none ? "" : "serverURL: try Servers.Server1.url(), "
     }
 
-    /// `operationId` → the method implementing it.
-    var byOperationID: [String: DiscoveredOperation] {
-        Dictionary(controller.operations.map { ($0.operationID, $0) }, uniquingKeysWith: { _, last in last })
+    /// swift-wire names a lone subject positionally (`_wireSubject`, `_wireEnterScope`) and labels each of
+    /// several (`_wireSubject_<Subject>`, `_wireEnterScope_<Subject>`). Matching that here is the whole
+    /// handshake with the structural half of the proxy — a mismatch is a "no member" error at the fold.
+    var subjectsAreLabelled: Bool { controllers.count > 1 }
+
+    private func suffix(_ controller: DiscoveredController) -> String {
+        subjectsAreLabelled ? "_\(controller.typeName)" : ""
+    }
+
+    func proxySubjectField(_ controller: DiscoveredController) -> String {
+        "_wireSubject\(suffix(controller))"
+    }
+
+    func proxyScopeEntry(_ controller: DiscoveredController) -> String {
+        "_wireEnterScope\(suffix(controller))"
+    }
+
+    /// The conformer's own field for a subject. Named the same way as the proxy's, so the two read alike.
+    func conformerField(_ controller: DiscoveredController) -> String {
+        "_wireSubject\(suffix(controller))"
+    }
+
+    var scopedControllers: [DiscoveredController] { controllers.filter { $0.seed != nil } }
+
+    /// A separate conformer is needed only when something is built per request. With every controller
+    /// app-scoped the aggregate already holds each subject, so it conforms directly.
+    var needsConformer: Bool { !scopedControllers.isEmpty }
+
+    /// `operationId` → the controller that declared it and the method implementing it.
+    var byOperationID: [String: (controller: DiscoveredController, operation: DiscoveredOperation)] {
+        var found: [String: (controller: DiscoveredController, operation: DiscoveredOperation)] = [:]
+        for controller in controllers {
+            for operation in controller.operations { found[operation.operationID] = (controller, operation) }
+        }
+        return found
     }
 
     /// Emit this spec's conformer and the contributor that mounts its operations.
@@ -70,6 +106,7 @@ struct DirectDispatchEmitter {
                 """
             )
         }
+        diagnoseDuplicates()
         let marked = byOperationID
         let missing = operationRoutes.keys.filter { marked[$0] == nil }.sorted()
         guard !missing.isEmpty else { return }
@@ -82,71 +119,123 @@ struct DirectDispatchEmitter {
         )
     }
 
+    /// Two controllers implementing one operationId would each be a plausible target and only one could
+    /// be mounted, so the document decides nothing and the choice would be discovery order. Reject it
+    /// rather than mount whichever came last.
+    private func diagnoseDuplicates() {
+        var owners: [String: [String]] = [:]
+        for controller in controllers {
+            for operation in controller.operations {
+                owners[operation.operationID, default: []].append(controller.typeName)
+            }
+        }
+        let clashes = owners.filter { $0.value.count > 1 }.sorted { $0.key < $1.key }
+        guard let (operationID, named) = clashes.first else { return }
+        fail(
+            """
+            \(named.sorted().joined(separator: " and ")) both declare @RawOperation \
+            '\(operationID)'. One operation is mounted once, so exactly one controller may implement it.
+            """
+        )
+    }
+
     private func fail(_ message: String) -> Never {
+        let location = controllers[0]
         FileHandle.standardError.write(
-            Data("\(controller.file):\(controller.line): error: \(message)\n".utf8)
+            Data("\(location.file):\(location.line): error: \(message)\n".utf8)
         )
         exit(1)
     }
 
     // MARK: - the conformer
 
-    /// The conformer an operation is called through. Request-scoped: one per request, holding that
-    /// request's subject. App-scoped: the aggregate itself, which already holds it as a field.
+    /// The conformer an operation is called through. With a request-scoped controller in the group it is
+    /// built per request; with none, the aggregate itself, which already holds every subject.
     ///
-    /// Its subject is optional *only* so the server can be built before any request exists. Every dispatch
-    /// path sets it, so a `nil` there is not a condition to handle — it means generated code was bypassed,
-    /// which is a programming error in this file rather than anything a caller can cause.
+    /// Request-scoped fields are optional for two reasons: the server has to be built before any request
+    /// exists, and a request enters only the scope of the controller owning the operation it dispatches —
+    /// entering all of them would construct subjects the request never uses, which is the waste
+    /// per-root reachability exists to avoid. So the other fields are legitimately `nil` and simply never
+    /// read; reaching one means generated code was bypassed, which is a programming error here rather
+    /// than anything a caller can cause.
     func conformerDeclaration() -> String {
-        guard let scoped else {
+        let forwarders = controllers.flatMap { controller in
+            controller.operations.map { forwarder(controller, $0) }
+        }
+        guard needsConformer else {
             return """
                 extension \(proxy): APIProtocol {
-                \(forwarders(reachingSubject: "_wireSubject").joined(separator: "\n\n"))
+                \(forwarders.joined(separator: "\n\n"))
                 }
                 """
         }
+        let fields = controllers.map { controller in
+            "    let \(conformerField(controller)): \(controller.typeName)"
+                + (controller.seed != nil ? "?" : "")
+        }
         return """
             struct \(conformer): APIProtocol {
-                let _wireSubject: \(scoped.typeName)?
+            \(fields.joined(separator: "\n"))
 
-            \(forwarders(reachingSubject: nil).joined(separator: "\n\n"))
+            \(forwarders.joined(separator: "\n\n"))
             }
             """
     }
 
-    /// One forwarder per operation. `reachingSubject` names the expression holding the subject, or `nil`
-    /// when it has to be unwrapped from the optional field first.
-    private func forwarders(reachingSubject subject: String?) -> [String] {
-        controller.operations.map { operation in
-            let signature =
-                "    func \(operation.methodName)(_ input: \(operation.inputType)) async throws "
-                + "-> \(operation.outputType) {"
-            guard let subject else {
-                return """
-                    \(signature)
-                            guard let wireOpenAPISubject = _wireSubject else {
-                                preconditionFailure(
-                                    "WireOpenAPI: '\(operation.operationID)' was dispatched with no "
-                                        + "request-scoped subject bound. The route terminal binds one "
-                                        + "before every call."
-                                )
-                            }
-                            return try await wireOpenAPISubject.\(operation.methodName)(input)
-                        }
-                    """
-            }
+    /// One operation, forwarded to the controller that declared it.
+    private func forwarder(_ controller: DiscoveredController, _ operation: DiscoveredOperation) -> String {
+        let signature =
+            "    func \(operation.methodName)(_ input: \(operation.inputType)) async throws "
+            + "-> \(operation.outputType) {"
+        // App-scoped inside a conformer, or any subject on a directly-conforming proxy: a stored field.
+        guard needsConformer, controller.seed != nil else {
+            let field = needsConformer ? conformerField(controller) : proxySubjectField(controller)
             return """
                 \(signature)
-                        try await \(subject).\(operation.methodName)(input)
+                        try await \(field).\(operation.methodName)(input)
                     }
                 """
         }
+        return """
+            \(signature)
+                    guard let wireOpenAPISubject = \(conformerField(controller)) else {
+                        preconditionFailure(
+                            "WireOpenAPI: '\(operation.operationID)' was dispatched with no "
+                                + "request-scoped subject bound. The route terminal binds one "
+                                + "before every call."
+                        )
+                    }
+                    return try await wireOpenAPISubject.\(operation.methodName)(input)
+                }
+            """
+    }
+
+    /// A conformer literal. `binding` names the controller whose subject is held in `wireOpenAPISubject`
+    /// for this request; every other request-scoped field is `nil`, and app-scoped ones come from the
+    /// proxy. Passing `nil` gives the template built at registration.
+    private func conformerLiteral(binding: DiscoveredController?, indent: String) -> String {
+        let arguments = controllers.map { controller -> String in
+            let value: String
+            if controller.seed == nil {
+                value = "self.\(proxySubjectField(controller))"
+            } else if controller.typeName == binding?.typeName {
+                value = "wireOpenAPISubject"
+            } else {
+                value = "nil"
+            }
+            return "\(indent)    \(conformerField(controller)): \(value)"
+        }
+        return "\(conformer)(\n\(arguments.joined(separator: ",\n"))\n\(indent))"
     }
 
     // MARK: - the request path
 
     /// The terminal: obtain this request's server, then call the operation's own method on it.
-    func terminal(_ operation: DiscoveredOperation, indent: String) -> String {
+    func terminal(
+        _ controller: DiscoveredController,
+        _ operation: DiscoveredOperation,
+        indent: String
+    ) -> String {
         let call = """
             \(indent)let wireOpenAPIHandler:
             \(indent)    @Sendable (HTTPRequest, HTTPBody?, ServerRequestMetadata) async throws -> (
@@ -162,21 +251,23 @@ struct DirectDispatchEmitter {
             \(indent)    reader: reader, sender: sender
             \(indent))
             """
-        // App-scoped: nothing varies per request, so the server built at registration is used as-is.
-        guard scoped != nil else {
+        // This operation's controller is app-scoped: nothing about its dispatch varies per request, so the
+        // server built at registration is used as-is — even when a sibling controller is request-scoped.
+        guard controller.seed != nil else {
             return "\(indent)let wireOpenAPIServer = wireOpenAPIServerTemplate\n" + call
         }
         // Scope entry stays in the terminal, matching M5.4.3: the scope outlives the middleware chain
         // wrapping it, teardown runs after the response, and a failure entering it is raised where
-        // `@ErrorResponse` can still map it.
+        // `@ErrorResponse` can still map it. Only this operation's own scope is entered.
         //
         // The server is *copied* and re-handlered, never constructed here: `UniversalServer.init` builds a
         // `Converter`, which allocates two `JSONEncoder`s and a `JSONDecoder`. Paying that per request
         // costs more than the task-local this exists to avoid — measured, not assumed.
         return """
-            \(indent)let (wireOpenAPISubject, wireOpenAPITeardown) = try await self._wireEnterScope(request)
+            \(indent)let (wireOpenAPISubject, wireOpenAPITeardown) = try await self.\
+            \(proxyScopeEntry(controller))(request)
             \(indent)var wireOpenAPIRebound = wireOpenAPIServerTemplate
-            \(indent)wireOpenAPIRebound.handler = \(conformer)(_wireSubject: wireOpenAPISubject)
+            \(indent)wireOpenAPIRebound.handler = \(conformerLiteral(binding: controller, indent: indent))
             \(indent)// `let`, because the handler closure below is `@Sendable` and cannot capture a `var`.
             \(indent)let wireOpenAPIServer = wireOpenAPIRebound
             \(indent)do {
@@ -189,15 +280,24 @@ struct DirectDispatchEmitter {
             """
     }
 
-    /// One `builder.register`, wrapped in this operation's middleware fold. Controller-scope entries fold
-    /// outside route-scope ones, matching WireMVC's ordering (controller-outer → route-inner → handler).
+    /// One `builder.register`, wrapped in this operation's middleware fold. Controller-scope entries come
+    /// from the controller that *declared* the operation — a group's controllers do not share a fold —
+    /// and fold outside route-scope ones, matching WireMVC's ordering (controller-outer → route-inner →
+    /// handler).
     ///
     /// The path is composed by the runtime's own `apiPathComponentsWithServerPrefix` rather than joined
     /// here. Two derivations of one rule can disagree, and a disagreement would put the route at a path
     /// the document does not describe — so the document supplies only its `paths:` key and the prefix is
     /// applied by the same code the generator would have used.
-    func registerBlock(_ operation: DiscoveredOperation, _ route: OperationRoute, indent: String) -> String {
-        let entries = controllerEntries + foldEntries(operation.middleware, indent + "            ")
+    func registerBlock(
+        _ controller: DiscoveredController,
+        _ operation: DiscoveredOperation,
+        _ route: OperationRoute,
+        indent: String
+    ) -> String {
+        let entries =
+            foldEntries(controller.middleware, indent + "            ")
+            + foldEntries(operation.middleware, indent + "            ")
         let register = """
             \(indent)builder.register(
             \(indent)    method: .\(route.method.lowercased()),
@@ -207,7 +307,7 @@ struct DirectDispatchEmitter {
         guard !entries.isEmpty else {
             return """
                 \(register) { request, _, parameters, reader, sender in
-                \(terminal(operation, indent: indent + "    "))
+                \(terminal(controller, operation, indent: indent + "    "))
                 \(indent)}
                 """
         }
@@ -223,7 +323,7 @@ struct DirectDispatchEmitter {
             \(indent)    }
             \(indent)    try await wireOpenAPIChain.intercept(input: wireOpenAPIBox) { wireOpenAPIFinalBox in
             \(indent)        try await wireOpenAPIFinalBox.withPendingContents { request, _, reader, sender in
-            \(terminal(operation, indent: indent + "            "))
+            \(terminal(controller, operation, indent: indent + "            "))
             \(indent)        }
             \(indent)    }
             \(indent)}
@@ -233,18 +333,19 @@ struct DirectDispatchEmitter {
     // MARK: - the contributor
 
     /// The conformance the proxy is collated as. The server is built once, here: that is what makes
-    /// dispatch O(1). Request-scoped it is the template each request copies and re-handlers; app-scoped it
-    /// *is* the server. Either way the `Converter`, and the coders it allocates, are constructed once for
-    /// the process.
+    /// dispatch O(1). With a request-scoped controller it is the template each such request copies and
+    /// re-handlers; with none it *is* the server. Either way the `Converter`, and the coders it allocates,
+    /// are constructed once for the process.
     func routeContributorDeclaration() -> String {
         // Sorted by operationId so the emitted file is stable across runs — the dictionary is not ordered,
         // and an output that reshuffles between builds re-triggers every downstream compile.
-        let marked = byOperationID
+        let owners = byOperationID
         let registrations = operationRoutes.sorted { $0.key < $1.key }
             .compactMap { operationID, route -> String? in
-                marked[operationID].map { registerBlock($0, route, indent: "        ") }
+                owners[operationID].map { registerBlock($0.controller, $0.operation, route, indent: "        ") }
             }
-        let templateHandler = scoped == nil ? "self" : "\(conformer)(_wireSubject: nil)"
+        let templateHandler =
+            needsConformer ? conformerLiteral(binding: nil, indent: "            ") : "self"
         return """
             extension \(proxy): RouteContributor {
                 func registerWireRoutes<Builder: HTTPServerRouteBuilder>(on builder: inout Builder) throws

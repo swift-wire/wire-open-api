@@ -44,9 +44,8 @@ those proxies' `RouteContributor` witnesses.
 ```
 
 `@OpenAPIController` is a marker; it generates nothing. Controllers sharing a spec collate
-onto **one** proxy: a document's operations are implemented against one generated
-`APIProtocol`, so one conformer per spec mounts each operation exactly once. An app serving
-several documents names them:
+onto **one** proxy, because a document's operations are implemented against one generated
+`APIProtocol`. An app serving several documents names them:
 
 ```swift
 @Singleton @OpenAPIController(spec: "TaskAPI")
@@ -57,9 +56,29 @@ With a single spec the bare `@OpenAPIController` groups everything together. The
 base-path argument: the prefix belongs to the document's `servers:` block, applied by the
 runtime's own `apiPathComponentsWithServerPrefix`.
 
-Splitting one spec across several controllers is rejected for now. Per-operation dispatch
-removes the reason it was ever a constraint, but the conformer still holds a single
-subject; lifting it is the remaining M6d work.
+### Several controllers may share one spec
+
+A document does not have to be one object's to serve. Operations are mounted individually,
+so each controller contributes the `@RawOperation`s it declares and the proxy holds them
+all; `APIProtocol` conformance is what makes the compiler check the set adds up. Declaring
+the same `operationId` twice is an error — one operation is mounted once.
+
+Scope and middleware stay per controller, not per spec:
+
+```swift
+@Scoped(seed: HTTPRequest.self)
+@OpenAPIController(spec: "TaskAPI")
+@Middleware(RequireAPIKeyKeys.factory)
+struct TaskController { @RawOperation func getTask(…) … }
+
+@Singleton
+@OpenAPIController(spec: "TaskAPI")
+struct TaskListController { @RawOperation func listTasks(…) … }
+```
+
+`getTask` enters a request scope and folds `RequireAPIKey` around itself; `listTasks`, on
+the same document, does neither. A request enters only the scope of the controller owning
+the operation it dispatches, so nothing is built that the request does not use.
 
 ## Requires a forked swift-openapi-generator, for now
 

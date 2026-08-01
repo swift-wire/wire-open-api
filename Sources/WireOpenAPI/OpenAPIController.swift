@@ -37,7 +37,9 @@ public macro OpenAPIController(spec: String) =
 ///
 /// The aggregate — rather than a proxy per controller — follows the document: a spec's operations are
 /// implemented against one generated `APIProtocol`, so one conformer per spec is the shape that mounts
-/// each operation exactly once.
+/// each operation exactly once. Several controllers may share that spec, each contributing the
+/// operations it declares; scoping and controller-scope `@Middleware` remain per controller, and the
+/// proxy holds or bridges each subject independently.
 public let wireOpenAPIControllerAlias = WireAdapterAnnotationV1(
     annotation: "OpenAPIController",
     capability: .contributesAggregateProxy(
