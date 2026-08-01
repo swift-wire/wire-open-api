@@ -16,6 +16,30 @@ public import WireMVC
 /// decodes `Input` and encodes `Output`, so `@JSONBody`'s content-type rules and WireMVC's own decoding
 /// stay separate concerns. Only the registration boundary moves.
 public enum WireOpenAPIRoutes {
+    /// Thrown at registration when an operation carrying route-scope `@Middleware` never matched a route
+    /// the generator actually registered.
+    ///
+    /// The match is by `(method, path)`, and the path is composed by *this* package — the document's
+    /// `paths:` key under its `servers:` prefix — while the real one is composed by
+    /// `apiPathComponentsWithServerPrefix` inside the generated `registerHandlers`. Two derivations of one
+    /// rule, so they can disagree. If they ever do, the switch falls through to the default branch and the
+    /// route's middleware is silently dropped; this turns that into a startup failure naming the
+    /// operations affected.
+    public struct RouteMismatch: Error, CustomStringConvertible {
+        public let operations: [String]
+
+        /// Public because the generated witness constructs it.
+        public init(operations: [String]) { self.operations = operations }
+
+        public var description: String {
+            """
+            WireOpenAPI: route-scope @Middleware was declared for \(operations.joined(separator: ", ")) \
+            but no registered route matched. The path this package composed from the document does not \
+            match the one the generated registerHandlers used, so the middleware would not have run.
+            """
+        }
+    }
+
     public typealias Operation = WireOpenAPIOperations.Operation
 
     /// Every operation `contributor` would have registered on a `ServerTransport`, captured instead.

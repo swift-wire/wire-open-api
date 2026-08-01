@@ -47,3 +47,24 @@ public let wireOpenAPIControllerAlias = WireAdapterAnnotationV1(
         groupedByAttribute: "spec"
     )
 )
+
+/// Marks a hand-written operation handler — one taking the generated `Operations.X.Input` and returning
+/// its `Output` — and declares **which** operation it implements.
+///
+/// Identity has to be declared rather than recovered. The generated protocol requirement is named from
+/// the operationId, so a method called `getTask` does implement `getTask` — but only after the
+/// generator's safe-name transform, which is identity for `getTask` and not for `get-task` or
+/// `list_tasks`. Recovering the id by reversing that transform would quietly match nothing for any spec
+/// whose operationIds aren't already Swift identifiers, and route-scope `@Middleware` on such a method
+/// would silently never apply. Declaring it is the same resolution `@RawRoute`'s explicit roles and
+/// `@MiddlewareFactory`'s role mapping reached.
+///
+/// Bare, the method's own name is the operationId — true by construction unless the method is renamed.
+@attached(peer)
+public macro RawOperation() =
+    #externalMacro(module: "WireOpenAPIMacros", type: "OpenAPIControllerMacro")
+
+/// The renamed form: `@RawOperation("get-task")` when the method name is not the operationId.
+@attached(peer)
+public macro RawOperation(_ operationID: String) =
+    #externalMacro(module: "WireOpenAPIMacros", type: "OpenAPIControllerMacro")

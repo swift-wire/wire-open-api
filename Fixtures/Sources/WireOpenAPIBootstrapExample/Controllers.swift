@@ -29,8 +29,17 @@ struct TaskStore: Sendable {
 struct TaskController: APIProtocol {
     @Inject let store: TaskStore
 
+    @RawOperation
     func getTask(_ input: Operations.GetTask.Input) async throws -> Operations.GetTask.Output {
         .ok(.init(body: .json(.init(id: input.path.id, title: store.title(for: input.path.id)))))
+    }
+
+    /// Route-scope middleware: `Audit` folds around this operation only, inside the controller's
+    /// `RequireAPIKey`. `@RawOperation` is what ties the method to the document's `listTasks`.
+    @RawOperation
+    @Middleware(AuditKeys.factory)
+    func listTasks(_ input: Operations.ListTasks.Input) async throws -> Operations.ListTasks.Output {
+        .ok(.init(body: .json(["1", "2", "3"])))
     }
 }
 
