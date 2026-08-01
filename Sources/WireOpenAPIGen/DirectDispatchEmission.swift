@@ -1,27 +1,27 @@
 import Foundation
 
-// Direct dispatch: the request path with neither ambient state nor per-request registration.
+// Mounting a spec's operations as WireMVC routes, dispatched directly.
 //
 // `registerHandlers` bakes `let server = UniversalServer(handler: self, …)` into every closure it hands
-// the transport, *by value*. That is the whole reason a request-scoped subject is awkward: the handler is
-// fixed at registration, so reaching it later needs either a task-local the forwarder reads, or a fresh
-// registration per request. Both are working around the same thing.
+// the transport, *by value*. That is what makes a request-scoped subject awkward: the handler is fixed at
+// registration, so reaching it later needs either a task-local the forwarder reads or a fresh
+// registration per request — both working around the same thing, and both measurably worse (see the
+// `m6d-request-scope-strategies` branch, which keeps all three side by side with the numbers).
 //
 // The generated per-operation methods on `UniversalServer` — which hold the only copy of an operation's
-// deserializer/serializer pair — remove the problem entirely: build a `UniversalServer` around a conformer
-// holding *this* request's subject and call the operation. One struct construction, no registration, no
-// ambient state, and cost independent of how many operations the document declares.
+// deserializer/serializer pair — remove the problem: build a `UniversalServer` once, and per request copy
+// it and point its `handler` at a conformer holding *this* request's subject. One struct copy, no
+// registration, no ambient state, and cost independent of how many operations the document declares.
 //
-// The catch is access: swift-openapi-generator emits that extension `fileprivate`, so nothing outside its
-// own `Server.swift` can call it. This strategy needs it emitted `internal` — a one-line change
-// (`ServerTranslator.swift`, `accessModifier: .fileprivate` → `nil`), sufficient because this file compiles
-// into the same module. Until that lands upstream it is opt-in via `--request-scope=direct`.
+// The catch is access: stock swift-openapi-generator emits that extension `fileprivate`, so nothing
+// outside its own `Server.swift` can call it. This needs it `internal` — a one-line change in
+// `ServerTranslator.swift`, sufficient because this file compiles into the same module — carried on a
+// fork until it lands upstream.
 
 /// `HTTPRequest.Method` for a document's method name.
 private func methodLiteral(_ method: String) -> String { ".\(method.lowercased())" }
 
-/// Emit a spec's route registrations as direct `UniversalServer` calls, plus the conformer they dispatch
-/// through.
+/// Emit a spec's route registrations, plus the conformer they dispatch through.
 func emitDirectDispatch(
     spec: String,
     proxy: String,
@@ -36,36 +36,34 @@ func emitDirectDispatch(
     let conformer = "_WireOpenAPIRequest_\(sanitizedKeyFragment(spec))"
     let serverURLArgument = serverPrefix == .none ? "" : "serverURL: try Servers.Server1.url(), "
 
-    // Direct dispatch registers routes from the *document* rather than from a collector, so every
-    // operation the document declares has to name a method here. Without the marker there is no method
-    // name to call and no way to derive one that does not re-do the generator's safe-name transform — so
-    // an unmarked operation is an error naming the operation, not a route that silently never appears.
+    // Routes come from the *document* rather than from replaying a registration, so every operation it
+    // declares has to name a method here. Without the marker there is no method name to call, and no way
+    // to derive one that does not re-do the generator's safe-name transform — so an unmarked operation is
+    // an error naming it, not a route that silently never appears.
     var byOperationID: [String: DiscoveredOperation] = [:]
     for operation in controller.operations { byOperationID[operation.operationID] = operation }
 
+    if operationRoutes.isEmpty {
+        FileHandle.standardError.write(
+            Data(
+                """
+                \(controller.file):\(controller.line): error: @OpenAPIController needs the OpenAPI \
+                document to derive its routes, and none was passed (--spec).
+
+                """.utf8
+            )
+        )
+        exit(1)
+    }
     let missing = operationRoutes.keys.filter { byOperationID[$0] == nil }.sorted()
     if !missing.isEmpty {
         FileHandle.standardError.write(
             Data(
                 """
-                \(controller.file):\(controller.line): error: direct dispatch needs every operation the \
-                document declares to carry @RawOperation, and \(missing.joined(separator: ", ")) \
+                \(controller.file):\(controller.line): error: every operation the document declares must \
+                carry @RawOperation, and \(missing.joined(separator: ", ")) \
                 \(missing.count == 1 ? "does" : "do") not. Mark the \
-                \(missing.count == 1 ? "method" : "methods") that implement \
-                \(missing.count == 1 ? "it" : "them").
-
-                """.utf8
-            )
-        )
-        exit(1)
-    }
-    if operationRoutes.isEmpty {
-        FileHandle.standardError.write(
-            Data(
-                """
-                \(controller.file):\(controller.line): error: direct dispatch derives its routes from the \
-                OpenAPI document, and none was passed (--spec). Pass the document, or use \
-                --request-scope=taskLocal.
+                \(missing.count == 1 ? "method that implements it" : "methods that implement them").
 
                 """.utf8
             )
@@ -73,30 +71,26 @@ func emitDirectDispatch(
         exit(1)
     }
 
-    // The conformer the operation is called through. Request-scoped: one per request, holding that
-    // request's subject. App-scoped: the aggregate itself.
+    // The conformer an operation is called through. Request-scoped: one per request, holding that
+    // request's subject. App-scoped: the aggregate itself, which already holds it as a field.
     //
-    // Its subject is optional only so the `UniversalServer` **template** can be built before any request
-    // exists (see below) — the request path always supplies one, and a `nil` there means the route was
-    // reached without scope entry, which is a bug rather than a condition to tolerate.
-    let forwarders = controller.operations.map { operation in
-        """
-            func \(operation.methodName)(_ input: \(operation.inputType)) async throws -> \(operation.outputType) {
-                guard let wireOpenAPISubject = _wireSubject else {
-                    throw WireOpenAPIRoutes.OutsideRequest(operation: "\(operation.operationID)")
-                }
-                return try await wireOpenAPISubject.\(operation.methodName)(input)
-            }
-        """
-    }
-    let appScopedForwarders = controller.operations.map { operation in
-        """
-            func \(operation.methodName)(_ input: \(operation.inputType)) async throws -> \(operation.outputType) {
-                try await _wireSubject.\(operation.methodName)(input)
-            }
-        """
-    }
+    // Its subject is optional *only* so the server can be built before any request exists (see below).
+    // Every dispatch path sets it, so a `nil` here is not a condition to handle — it means generated code
+    // was bypassed, which is a programming error in this file rather than anything a caller can cause.
     if let scoped {
+        let forwarders = controller.operations.map { operation in
+            """
+                func \(operation.methodName)(_ input: \(operation.inputType)) async throws -> \(operation.outputType) {
+                    guard let wireOpenAPISubject = _wireSubject else {
+                        preconditionFailure(
+                            "WireOpenAPI: '\(operation.operationID)' was dispatched with no request-scoped "
+                                + "subject bound. The route terminal binds one before every call."
+                        )
+                    }
+                    return try await wireOpenAPISubject.\(operation.methodName)(input)
+                }
+            """
+        }
         lines.append(
             """
             struct \(conformer): APIProtocol {
@@ -107,7 +101,13 @@ func emitDirectDispatch(
             """
         )
     } else {
-        let forwarders = appScopedForwarders
+        let forwarders = controller.operations.map { operation in
+            """
+                func \(operation.methodName)(_ input: \(operation.inputType)) async throws -> \(operation.outputType) {
+                    try await _wireSubject.\(operation.methodName)(input)
+                }
+            """
+        }
         lines.append(
             """
             extension \(proxy): APIProtocol {
@@ -118,8 +118,7 @@ func emitDirectDispatch(
     }
     lines.append("")
 
-    /// The terminal: obtain the request's conformer, then call the operation's own method on a
-    /// `UniversalServer` wrapping it.
+    /// The terminal: obtain this request's server, then call the operation's own method on it.
     func terminal(_ operation: DiscoveredOperation, indent: String) -> String {
         let call = """
             \(indent)let wireOpenAPIHandler:
@@ -136,18 +135,17 @@ func emitDirectDispatch(
             \(indent)    reader: reader, sender: sender
             \(indent))
             """
+        // App-scoped: nothing varies per request, so the server built at registration is used as-is.
         guard scoped != nil else {
-            // App-scoped: `wireOpenAPIServer` is the one built at registration.
-            return call
+            return "\(indent)let wireOpenAPIServer = wireOpenAPIServerTemplate\n" + call
         }
         // Scope entry stays in the terminal, matching M5.4.3: the scope outlives the middleware chain
-        // wrapping it, teardown runs after the response, and a failure to enter is raised where
+        // wrapping it, teardown runs after the response, and a failure entering it is raised where
         // `@ErrorResponse` can still map it.
         //
-        // The server is *copied* from the template and only its handler replaced, never constructed here:
-        // `UniversalServer.init` builds a `Converter`, which allocates two `JSONEncoder`s and a
-        // `JSONDecoder`. Paying that per request costs more than the task-local this strategy exists to
-        // avoid — measured, not assumed.
+        // The server is *copied* and re-handlered, never constructed here: `UniversalServer.init` builds a
+        // `Converter`, which allocates two `JSONEncoder`s and a `JSONDecoder`. Paying that per request
+        // costs more than the task-local this exists to avoid — measured, not assumed.
         return """
             \(indent)let (wireOpenAPISubject, wireOpenAPITeardown) = try await self._wireEnterScope(request)
             \(indent)var wireOpenAPIRebound = wireOpenAPIServerTemplate
@@ -166,9 +164,19 @@ func emitDirectDispatch(
 
     /// One `builder.register`, wrapped in this operation's middleware fold. Controller-scope entries fold
     /// outside route-scope ones, matching WireMVC's ordering (controller-outer → route-inner → handler).
+    ///
+    /// The path is composed by the runtime's own `apiPathComponentsWithServerPrefix` rather than joined
+    /// here. Two derivations of one rule can disagree, and a disagreement would put the route at a path
+    /// the document does not describe — so the document supplies only its `paths:` key and the prefix is
+    /// applied by the same code the generator would have used.
     func registerBlock(_ operation: DiscoveredOperation, _ route: OperationRoute, indent: String) -> String {
         let entries = controllerEntries + foldEntries(operation.middleware, indent + "            ")
-        let register = "\(indent)builder.register(method: \(methodLiteral(route.method)), path: \"\(route.path)\")"
+        let register = """
+            \(indent)builder.register(
+            \(indent)    method: \(methodLiteral(route.method)),
+            \(indent)    path: try wireOpenAPIServerTemplate.apiPathComponentsWithServerPrefix("\(route.path)")
+            \(indent))
+            """
         guard !entries.isEmpty else {
             return """
                 \(register) { request, _, parameters, reader, sender in
@@ -199,19 +207,13 @@ func emitDirectDispatch(
     // an output that reshuffles between builds re-triggers every downstream compile.
     let registrations = operationRoutes.sorted { $0.key < $1.key }
         .compactMap { operationID, route -> String? in
-            guard let operation = byOperationID[operationID] else { return nil }
-            return registerBlock(operation, route, indent: "        ")
+            byOperationID[operationID].map { registerBlock($0, route, indent: "        ") }
         }
 
-    // Built once, at registration. App-scoped there is nothing per-request at all, so this *is* the
-    // server; request-scoped it is the template each request copies and re-handlers. Either way the
-    // `Converter` — and the coders it allocates — is constructed once for the process, which is what makes
-    // this strategy O(1) in a way per-request registration is not.
-    let sharedServer =
-        scoped == nil
-        ? "        let wireOpenAPIServer = UniversalServer(\(serverURLArgument)handler: self)\n"
-        : "        let wireOpenAPIServerTemplate = UniversalServer(\n"
-            + "            \(serverURLArgument)handler: \(conformer)(_wireSubject: nil)\n        )\n"
+    // Built once, at registration: this is what makes dispatch O(1). Request-scoped it is the template
+    // each request copies and re-handlers; app-scoped it *is* the server. Either way the `Converter`, and
+    // the coders it allocates, are constructed once for the process.
+    let templateHandler = scoped == nil ? "self" : "\(conformer)(_wireSubject: nil)"
 
     lines.append(
         """
@@ -223,7 +225,10 @@ func emitDirectDispatch(
                 Builder.ResponseSender: ~Copyable,
                 Builder.ResponseSender.Writer: ~Copyable
             {
-        \(sharedServer)\(registrations.joined(separator: "\n"))
+                let wireOpenAPIServerTemplate = UniversalServer(
+                    \(serverURLArgument)handler: \(templateHandler)
+                )
+        \(registrations.joined(separator: "\n"))
             }
         }
         """

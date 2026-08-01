@@ -24,12 +24,6 @@ jobs:
         run: swift build
       - name: Test
         run: swift test
-      - name: Run end-to-end example
-        # Builds through WireOpenAPIBuildPlugin (WireGen + WireOpenAPIGen), collates two specs onto two
-        # aggregate proxies, and applies both to a recording ServerTransport. Prints "wire-open-api OK"
-        # or exits non-zero.
-        run: swift run WireOpenAPIExample
-
   Fixtures:
     name: Fixtures — serve and probe
     runs-on: ubuntu-24.04

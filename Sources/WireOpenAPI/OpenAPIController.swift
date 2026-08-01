@@ -4,17 +4,17 @@ import WireMVC
 // The controller collation feature: the `@OpenAPIController` marker and its aggregate-proxy directive.
 
 /// Marks an `APIProtocol` conformer as a Wire-managed OpenAPI controller. The build plugin collates every
-/// controller sharing a `spec` onto **one** generated proxy and emits that proxy's `TransportContributor`
-/// conformance, whose witness calls the generator's `registerHandlers`. So `@Singleton @OpenAPIController`
-/// is all a controller needs.
+/// controller sharing a `spec` onto **one** generated proxy and emits that proxy's `RouteContributor`
+/// conformance, which mounts the document's operations as WireMVC routes. So `@Singleton
+/// @OpenAPIController` is all a controller needs.
 ///
 /// A no-op peer macro: the attribute exists so it compiles and so the plugin can read it. The conformance
-/// cannot be generated here — `TransportContributor` refines `Sendable`, and Swift requires a `Sendable`
+/// cannot be generated here — `RouteContributor` refines `Sendable`, and Swift requires a `Sendable`
 /// conformance in the type's own file, so it must be attached to the plugin-emitted proxy instead.
 ///
 /// **No base path.** The prefix operations register under belongs to the document's `servers:` block,
-/// which `registerHandlers` already reads through `.defaultOpenAPIServerURL`. With controllers aggregated
-/// per spec, a per-controller path would also be ambiguous the moment two disagreed.
+/// which the runtime's `apiPathComponentsWithServerPrefix` applies. With controllers aggregated per spec,
+/// a per-controller path would also be ambiguous the moment two disagreed.
 @attached(peer)
 public macro OpenAPIController() =
     #externalMacro(module: "WireOpenAPIMacros", type: "OpenAPIControllerMacro")
@@ -35,9 +35,9 @@ public macro OpenAPIController(spec: String) =
 /// the same key `@Controller` uses. An operation is a route, so it serves under the same router,
 /// `@NotFound`, error tiers, middleware layer and composition root as an annotation-driven one.
 ///
-/// The aggregate — rather than a proxy per controller — is forced by the generator: `registerHandlers` is
-/// emitted once per document and registers *every* operation from a single handler, so one conformer per
-/// spec is the only shape that registers each operation once.
+/// The aggregate — rather than a proxy per controller — follows the document: a spec's operations are
+/// implemented against one generated `APIProtocol`, so one conformer per spec is the shape that mounts
+/// each operation exactly once.
 public let wireOpenAPIControllerAlias = WireAdapterAnnotationV1(
     annotation: "OpenAPIController",
     capability: .contributesAggregateProxy(

@@ -128,7 +128,7 @@ final class ControllerScanner: SyntaxVisitor {
             else {
                 diagnose(
                     "@RawOperation '\(operationID)' must take the operation's generated Input and return "
-                        + "its Output — that is the shape `registerHandlers` dispatches to.",
+                        + "its Output — that is the shape the generated operation method dispatches to.",
                     at: function.name
                 )
                 continue

@@ -29,16 +29,16 @@ func sanitizedKeyFragment(_ key: String) -> String {
 
 // MARK: - the server prefix
 
-/// How the witness should spell `registerHandlers`' `serverURL:` argument, read from the document's
+/// How the witness should spell the `UniversalServer`'s `serverURL:` argument, read from the document's
 /// `servers:` block.
 ///
-/// It cannot be defaulted away. `registerHandlers`' own default is `.defaultOpenAPIServerURL`, which is
+/// It cannot be defaulted away. The default is `.defaultOpenAPIServerURL`, which is
 /// literally `/` — *not* the document's server — so an operation under `servers: [{url: /api/v1}]` would
 /// register at `/tasks/{id}` and 404 at the path the spec describes. (Found by serving it.) The
 /// generator emits the document's servers as `Servers.ServerN.url()`, so the witness names the first.
 enum ServerPrefix {
     /// No `servers:` block: the generator emits an empty `enum Servers {}`, so naming a server would not
-    /// compile. `registerHandlers`' default is then correct — the document describes no prefix.
+    /// compile. The default is then correct — the document describes no prefix.
     case none
     /// One distinct path prefix across the document's servers — name it.
     case server1
@@ -85,8 +85,9 @@ func resolveServerPrefix(specPaths: [String]) -> ServerPrefix {
     return .server1
 }
 
-/// Where an operation registers: the HTTP method, and the path the generator gives it — the document's
-/// `paths:` key under the server prefix, which is how `apiPathComponentsWithServerPrefix` composes it.
+/// Where an operation registers: the HTTP method, and the document's `paths:` key **unjoined**. The
+/// server prefix is applied at registration by the runtime's own `apiPathComponentsWithServerPrefix`, so
+/// there is only ever one derivation of that rule.
 struct OperationRoute {
     let method: String
     let path: String
@@ -94,9 +95,8 @@ struct OperationRoute {
 
 /// `operationId` → where it registers, read from the document.
 ///
-/// The collector hands back `(method, path)` and nothing else — the generated closure knows the
-/// operationId (`forOperation: Operations.GetTask.id`) but never surfaces it — so matching a *method's*
-/// declared middleware to a *collected* route has to go through the document.
+/// This is the only source of routing: nothing replays the generated `registerHandlers` to discover what
+/// it would have registered, so the document is read directly and each operation is mounted from it.
 func resolveOperationRoutes(specPaths: [String]) -> [String: OperationRoute] {
     guard specPaths.count == 1, let path = specPaths.first,
         let contents = try? String(contentsOfFile: path, encoding: .utf8),
@@ -105,9 +105,6 @@ func resolveOperationRoutes(specPaths: [String]) -> [String: OperationRoute] {
         let paths = document["paths"] as? [String: Any]
     else { return [:] }
 
-    let servers = (document["servers"] as? [[String: Any]] ?? []).compactMap { $0["url"] as? String }
-    let prefix = servers.first.flatMap { URL(string: $0)?.path } ?? ""
-
     var routes: [String: OperationRoute] = [:]
     for (specPath, item) in paths {
         guard let operations = item as? [String: Any] else { continue }
@@ -115,10 +112,7 @@ func resolveOperationRoutes(specPaths: [String]) -> [String: OperationRoute] {
             guard let operation = operation as? [String: Any],
                 let operationID = operation["operationId"] as? String
             else { continue }
-            // `//tasks` and `/api/v1/tasks` both reach the router as the latter; normalise so the emitted
-            // match is the path the collector actually reports.
-            let joined = (prefix + specPath).replacingOccurrences(of: "//", with: "/")
-            routes[operationID] = OperationRoute(method: method.uppercased(), path: joined)
+            routes[operationID] = OperationRoute(method: method.uppercased(), path: specPath)
         }
     }
     return routes
