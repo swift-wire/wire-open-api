@@ -40,8 +40,11 @@ jobs:
       - name: Serve an OpenAPI operation and a @Get route from one router
         working-directory: Fixtures
         # The M6d.1 gate. Four plugins run over one target — swift-openapi-generator, WireGen,
-        # WireMVCRouteGen, WireOpenAPIGen — and both controllers collate into
+        # WireMVCRouteGen, WireOpenAPIGen — and every controller collates into
         # WireMVCKeys.routeContributors, so the generated @main serves them from a single router.
+        #
+        # The spec-driven half is split across two controllers: TaskController (request-scoped, getTask)
+        # and TaskListController (app-scoped, listTasks). One document, two objects, two scopes.
         run: |
           BIN="$(swift build --show-bin-path)/WireOpenAPIBootstrapExample"
           stdbuf -oL "$BIN" > serverlog.txt 2>&1 &
@@ -84,7 +87,8 @@ jobs:
           case "$mvc" in *'{"count":3}'*"[200]") ;; *) echo "the WireMVC route did not serve"; exit 1;; esac
           case "$notfound" in *"no route here"*"[404]") ;; *) echo "@NotFound did not fire"; exit 1;; esac
           [ "$unprefixed" = 404 ] || { echo "operation registered without its server prefix"; exit 1; }
-          case "$list" in *"[200]") ;; *) echo "the second operation did not serve"; exit 1;; esac
+          # Served by the *other* controller of the same spec, from the shared app-scoped TaskStore.
+          case "$list" in *'"3"'*"[200]") ;; *) echo "the second controller's operation did not serve"; exit 1;; esac
 
           # @Scoped(seed:) — the M6d.3 gate. The subject is built from the request being served and
           # reaches the operation with no ambient state: each response must carry its own request's path,
@@ -113,6 +117,14 @@ jobs:
           # Route scope must not leak to the controller's other operations.
           grep -q '^audit: /api/v1/tasks/42' serverlog.txt \
             && { echo "route-scope @Middleware leaked onto another operation"; exit 1; } || true
+
+          # Two controllers, one spec — the M6d.3 gate. Each keeps its own controller-scope fold and its
+          # own scope: TaskController declares @Middleware(RequireAPIKey) and is @Scoped(seed:), while
+          # TaskListController declares neither. A group that shared either would show it here.
+          grep -q '^apikey: GET /api/v1/tasks$' serverlog.txt \
+            && { echo "controller-scope @Middleware leaked between controllers sharing a spec"; exit 1; } || true
+          grep -q '^scope: constructed for /api/v1/tasks$' serverlog.txt \
+            && { echo "an app-scoped controller's operation entered a request scope"; exit 1; } || true
 
   SwiftFormat:
     name: swift-format (6.4 toolchain)
