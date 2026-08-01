@@ -45,6 +45,14 @@ jobs:
         #
         # The spec-driven half is split across two controllers: TaskController (request-scoped, getTask)
         # and TaskListController (app-scoped, listTasks). One document, two objects, two scopes.
+        #
+        # And a *second* document, OrdersAPI, generated public into its own module and mounted from here.
+        # Both modules spell their generated types `APIProtocol`/`Operations`/`Servers` identically, so
+        # this is also the check that the emitted namespaces keep them apart.
+        #
+        # That document is served by two controllers in *two modules*: OrderController beside it, and
+        # OrderSummaryController here in the app — the arrangement `spec:` exists for, since where a
+        # controller is declared says nothing about which document it implements.
         run: |
           BIN="$(swift build --show-bin-path)/WireOpenAPIBootstrapExample"
           stdbuf -oL "$BIN" > serverlog.txt 2>&1 &
@@ -71,12 +79,25 @@ jobs:
           # so its response embeds the path of the request that built it — two requests carrying each
           # other's path would mean one subject was shared.
           other=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/api/v1/tasks/99)
+          # The second document, under its own `servers:` prefix, from its own module.
+          order=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/api/v2/orders/7)
+          order2=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/api/v2/orders/9)
+          # One document's prefix must not serve the other's operation.
+          crossed=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/v1/orders/7)
+          # The half of the Orders document implemented in *this* target, naming its types qualified
+          # because the bare spelling here means this target's own document.
+          summary=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/api/v2/orders)
+          crossed2=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/v2/tasks)
           kill "$pid" 2>/dev/null || true
           [ "$ok" = 1 ] || { echo "the fixture did not bind"; cat serverlog.txt; exit 1; }
           echo "GET /api/v1/tasks/42 → $openapi"
           echo "GET /status/tasks    → $mvc"
           echo "GET /nope            → $notfound"
           echo "GET /tasks/42        → $unprefixed (expect 404: the prefix comes from servers:)"
+          echo "GET /api/v2/orders/7 → $order"
+          echo "GET /api/v1/orders/7 → $crossed (expect 404: that prefix belongs to the other document)"
+          echo "GET /api/v2/orders   → $summary"
+          echo "GET /api/v2/tasks    → $crossed2 (expect 404: likewise, in the other direction)"
           # Foundation escapes `/` as `\/` in JSON output; strip the backslashes rather than write
           # patterns that `case` would itself treat as escapes.
           plain() { printf '%s' "$1" | tr -d '\\'; }
@@ -124,6 +145,35 @@ jobs:
           grep -q '^apikey: GET /api/v1/tasks$' serverlog.txt \
             && { echo "controller-scope @Middleware leaked between controllers sharing a spec"; exit 1; } || true
           grep -q '^scope: constructed for /api/v1/tasks$' serverlog.txt \
+            && { echo "an app-scoped controller's operation entered a request scope"; exit 1; } || true
+
+          # Two specs in one app. OrdersAPI is generated `public` into its own module, with its own
+          # request scope and its own server prefix; the app also generates the Tasks document itself.
+          # Both spell APIProtocol/Operations/Servers the same, so a mix-up would land here.
+          case "$(plain "$order")" in
+            *'"item" : "item-7 via /api/v2/orders/7"'*"[200]") ;;
+            *) echo "the second spec's operation did not serve"; exit 1;;
+          esac
+          case "$(plain "$order2")" in
+            *'"item" : "item-9 via /api/v2/orders/9"'*"[200]") ;;
+            *) echo "the second spec's request-scoped subject did not follow the request"; exit 1;;
+          esac
+          [ "$crossed" = 404 ] || { echo "one document's prefix served the other's operation"; exit 1; }
+          grep -q '^scope: order trace for /api/v2/orders/7' serverlog.txt \
+            || { echo "the second spec's request scope was not entered"; exit 1; }
+          # Middleware belongs to the controller that declared it, and nothing in OrdersAPI declares any.
+          grep -q '^apikey: GET /api/v2/orders/7' serverlog.txt \
+            && { echo "@Middleware leaked from one spec to another"; exit 1; } || true
+
+          # One document, two controllers, two modules. OrderSummaryController is declared in this target
+          # and implements the OrdersAPI document, which is the case `spec:` cannot be derived for.
+          case "$summary" in
+            *'"item-7"'*'"item-9"'*"[200]") ;;
+            *) echo "the cross-module controller's operation did not serve"; exit 1;;
+          esac
+          [ "$crossed2" = 404 ] || { echo "one document's prefix served the other's operation"; exit 1; }
+          # It is app-scoped, so it enters no request scope even though its sibling in OrdersAPI does.
+          grep -q '^scope: order trace for /api/v2/orders$' serverlog.txt \
             && { echo "an app-scoped controller's operation entered a request scope"; exit 1; } || true
 
   SwiftFormat:

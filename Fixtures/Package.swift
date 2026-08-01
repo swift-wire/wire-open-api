@@ -16,7 +16,10 @@ import PackageDescription
 // preserve — so this is the first thing that exercises `WireOpenAPIRoutes.invoke` at runtime.
 //
 // Run from this directory: `swift build`, `swift run WireOpenAPIBootstrapExample`.
-let proposalSettings: [SwiftSetting] = [
+// Everything below `InternalImportsByDefault`, which a module holding *public* generated code cannot
+// have: swift-openapi-generator emits plain `import` lines, and a public method whose parameter types
+// come from an internally-imported module does not compile. See the OrdersAPI target.
+let generatedPublicAPISettings: [SwiftSetting] = [
     .strictMemorySafety(),
     .enableExperimentalFeature("SuppressedAssociatedTypesWithDefaults"),
     .enableExperimentalFeature("LifetimeDependence"),
@@ -26,8 +29,10 @@ let proposalSettings: [SwiftSetting] = [
     .enableUpcomingFeature("InferIsolatedConformances"),
     .enableUpcomingFeature("ExistentialAny"),
     .enableUpcomingFeature("MemberImportVisibility"),
-    .enableUpcomingFeature("InternalImportsByDefault"),
 ]
+
+let proposalSettings: [SwiftSetting] =
+    generatedPublicAPISettings + [.enableUpcomingFeature("InternalImportsByDefault")]
 
 let package = Package(
     name: "wire-open-api-fixtures",
@@ -60,12 +65,28 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-log.git", from: "1.13.2"),
     ],
     targets: [
+        // A second document, in its own module: its `openapi.yaml`, the types swift-openapi-generator
+        // makes from it, and the controller implementing them. It runs only the OpenAPI generator —
+        // WireGen runs once, in the app, and re-parses this module's sources because of its
+        // `_WireExports.swift` marker. That is what puts the proxy for this spec in the app.
+        .target(
+            name: "OrdersAPI",
+            dependencies: [
+                .product(name: "WireOpenAPI", package: "wire-open-api"),
+                .product(name: "Wire", package: "swift-wire"),
+                .product(name: "OpenAPIRuntime", package: "swift-openapi-runtime"),
+                .product(name: "HTTPTypes", package: "swift-http-types"),
+            ],
+            swiftSettings: generatedPublicAPISettings,
+            plugins: [.plugin(name: "OpenAPIGenerator", package: "swift-openapi-generator")]
+        ),
         // Three plugins on one target — the arrangement spike-28 gated: OpenAPIGenerator emits the spec's
         // types and `registerHandlers`, then WireOpenAPIBuildPlugin runs WireGen (graph + aggregate proxy)
         // and WireOpenAPIGen (the proxy's conformances).
         .executableTarget(
             name: "WireOpenAPIBootstrapExample",
             dependencies: [
+                "OrdersAPI",
                 .product(name: "WireOpenAPI", package: "wire-open-api"),
                 .product(name: "WireMVC", package: "wire-mvc"),
                 .product(name: "WireMVCRouter", package: "wire-mvc"),
@@ -89,6 +110,6 @@ let package = Package(
                 .plugin(name: "WireMVCRouteGenPlugin", package: "wire-mvc"),
                 .plugin(name: "WireOpenAPIGenPlugin", package: "wire-open-api"),
             ]
-        )
+        ),
     ]
 )

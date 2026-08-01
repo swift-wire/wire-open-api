@@ -28,7 +28,7 @@ struct WireOpenAPIBuildPlugin: BuildToolPlugin {
         // every Wire-aware dependency (one that ships a `_WireExports.swift` marker) so its bindings and
         // controllers compose into this consumer. Both tools read the same set — a controller may live in a
         // shared library while its proxy is emitted here.
-        var dependencyGroups: [(module: String, sources: [URL], isExternal: Bool)] = []
+        var dependencyGroups: [(module: String, sources: [URL], specs: [URL], isExternal: Bool)] = []
         var seenModules: Set<String> = []
         for dependency in target.dependencies {
             let dependencyTargets: [Target]
@@ -52,7 +52,17 @@ struct WireOpenAPIBuildPlugin: BuildToolPlugin {
                 guard dependencySources.contains(where: { $0.lastPathComponent == "_WireExports.swift" })
                 else { continue }
                 seenModules.insert(dependencyModule.moduleName)
-                dependencyGroups.append((dependencyModule.moduleName, dependencySources, isExternal))
+                // A dependency may own a whole document — its own generated `APIProtocol` and the
+                // controllers implementing it. That is how one app serves two specs, so its document is
+                // read from there rather than expected in this target.
+                dependencyGroups.append(
+                    (
+                        dependencyModule.moduleName,
+                        dependencySources,
+                        openAPIDocuments(in: dependencyModule),
+                        isExternal
+                    )
+                )
             }
         }
 
@@ -72,18 +82,18 @@ struct WireOpenAPIBuildPlugin: BuildToolPlugin {
         // compile in *this* module — can name a controller declared in a shared library.
         // The document itself, so the generated witness can name its server prefix. A *source* file of
         // the target, never the OpenAPI generator's output — reading that would be an undeclared input.
-        let specs = sourceModule.sourceFiles
-            .map(\.url)
-            .filter {
-                ["yaml", "yml", "json"].contains($0.pathExtension)
-                    && $0.lastPathComponent != "openapi-generator-config.yaml"
-            }
+        let specs = openAPIDocuments(in: sourceModule)
 
         // Built up in statements rather than one `+` chain: the chain grew a term too long for the
         // type checker, which then failed with "unable to type-check this expression in reasonable
         // time" — an error SwiftPM swallows entirely unless you pass `--verbose`.
         var openAPIGenArguments: [String] = [handlersURL.path]
         for spec in specs { openAPIGenArguments += ["--spec", spec.path] }
+        // `--spec-module <module> <document>`: this spec's generated types are that module's, so
+        // `@OpenAPIController(spec: "<module>")` names it and the emitted conformer qualifies against it.
+        for group in dependencyGroups {
+            for spec in group.specs { openAPIGenArguments += ["--spec-module", group.module, spec.path] }
+        }
         for group in dependencyGroups { openAPIGenArguments += ["--import", group.module] }
         openAPIGenArguments += ["--module", sourceModule.moduleName]
         openAPIGenArguments += swiftSources.map(\.path)
@@ -107,9 +117,20 @@ struct WireOpenAPIBuildPlugin: BuildToolPlugin {
                 // swift-openapi-generator and not this tool, so the emitted `serverURL` — and, later, any
                 // spec-derived diagnostic — would be computed against the previous document. Spike-28
                 // recorded exactly this hazard; the fix is one line and easy to omit.
-                inputFiles: allInputFiles + specs,
+                inputFiles: allInputFiles + specs + dependencyGroups.flatMap(\.specs),
                 outputFiles: [handlersURL]
             ),
         ]
     }
+}
+
+/// A module's OpenAPI documents: *source* files of the target, never the generator's emitted Swift, which
+/// would be an undeclared build input (spike-28, finding 1). The generator's own config is not one.
+private func openAPIDocuments(in module: SourceModuleTarget) -> [URL] {
+    module.sourceFiles
+        .map(\.url)
+        .filter {
+            ["yaml", "yml", "json"].contains($0.pathExtension)
+                && $0.lastPathComponent != "openapi-generator-config.yaml"
+        }
 }

@@ -1,4 +1,5 @@
 import HTTPTypes
+import OrdersAPI
 import Wire
 import WireMVC
 import WireOpenAPI
@@ -35,15 +36,17 @@ struct RequestIdentity: Sendable {
 
 // MARK: - spec-driven
 
-/// `@OpenAPIController` marks it; the plugin collates it onto `_WireOpenAPIContributor_Tasks`, which
-/// carries the `RouteContributor` conformance. No base path here — the prefix is the document's
+/// `@OpenAPIController` marks it. The **bare** form means this target's own document — the one generated
+/// alongside these sources — so nothing needs naming; `spec:` is for a document whose generated types
+/// belong to another module, as `OrdersAPI` does. The plugin collates it onto `_WireOpenAPIContributor`,
+/// which carries the `RouteContributor` conformance. No base path here — the prefix is the document's
 /// `servers:` entry (`/api/v1`), applied by `apiPathComponentsWithServerPrefix`.
 ///
 /// It implements **part** of the document. `TaskListController` below implements the rest, and the two
 /// collate onto one proxy: operations are mounted individually, so a spec is no longer one object's to
 /// serve. `APIProtocol` conformance is what checks the halves add up.
 @Scoped(seed: HTTPRequest.self)
-@OpenAPIController(spec: "Tasks")
+@OpenAPIController()
 @Middleware(RequireAPIKeyKeys.factory)
 struct TaskController {
     @Inject let store: TaskStore
@@ -68,7 +71,7 @@ struct TaskController {
 /// do not share a fold: `RequireAPIKey` must run for `getTask` and not for `listTasks`. Both still reach
 /// the same app-scoped `TaskStore`, so one graph sits behind the whole spec.
 @Singleton
-@OpenAPIController(spec: "Tasks")
+@OpenAPIController()
 struct TaskListController {
     @Inject let store: TaskStore
 
@@ -78,6 +81,29 @@ struct TaskListController {
     @Middleware(AuditKeys.factory)
     func listTasks(_ input: Operations.ListTasks.Input) async throws -> Operations.ListTasks.Output {
         .ok(.init(body: .json((1...store.count).map(String.init))))
+    }
+}
+
+/// A controller for the **OrdersAPI** document that lives *here*, in the app, rather than beside its
+/// document — the arrangement `spec:` exists for, and the one that makes it un-derivable: where this type
+/// is declared says nothing about which document it implements. `spec: "OrdersAPI"` is what says so.
+///
+/// It shares the Orders document with `OrderController` in that module, so one spec is served by two
+/// controllers in two modules, at two scopes, from one proxy.
+///
+/// Its types are written qualified, and must be: the bare `Operations` here resolves to *this* target's
+/// own generated types — a module's own declarations win over imported ones — which describe the Tasks
+/// document and have no `ListOrders`.
+@Singleton
+@OpenAPIController(spec: "OrdersAPI")
+struct OrderSummaryController {
+    @Inject let store: OrderStore
+
+    @RawOperation
+    func listOrders(
+        _ input: OrdersAPI.Operations.ListOrders.Input
+    ) async throws -> OrdersAPI.Operations.ListOrders.Output {
+        .ok(.init(body: .json([store.item(for: "7"), store.item(for: "9")])))
     }
 }
 

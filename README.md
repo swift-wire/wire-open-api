@@ -80,14 +80,67 @@ struct TaskListController { @RawOperation func listTasks(…) … }
 the same document, does neither. A request enters only the scope of the controller owning
 the operation it dispatches, so nothing is built that the request does not use.
 
+### Several specs in one app
+
+One document per target, so a second document lives in its own module — its `openapi.yaml`,
+the types swift-openapi-generator makes from it, and the controllers implementing them:
+
+```swift
+.target(
+    name: "OrdersAPI",
+    dependencies: [.product(name: "WireOpenAPI", package: "wire-open-api"), …],
+    plugins: [.plugin(name: "OpenAPIGenerator", package: "swift-openapi-generator")]
+)
+```
+
+That module needs `accessModifier: public` in its generator config and a
+`_WireExports.swift` marker; the app depends on it, and `@OpenAPIController(spec: "OrdersAPI")`
+names it. WireGen still runs once, in the app, so that is where the proxy is emitted.
+
+The two forms mean one thing each. Bare `@OpenAPIController()` is **this target's own
+document**; `@OpenAPIController(spec: "M")` says the generated `APIProtocol` is module `M`'s.
+A `spec:` naming no such dependency is an error rather than a label quietly resolved against
+the local document — controllers implementing a document routinely live in a different module
+from it, so where a controller is declared says nothing about which document it implements,
+and a wrong guess would report itself as a missing `@RawOperation` for operations nobody
+wrote.
+
+The hazard this arrangement carries is that the generator names its types from nothing about
+the document: **every** spec module spells them `APIProtocol`, `Operations`, `Servers`,
+`Components`. In the app, which imports two of them, a bare `Operations.GetOrder.Input` is
+"ambiguous for type lookup" — including the spellings copied verbatim out of a controller
+that was perfectly unambiguous where it was written. The generated conformer is therefore
+emitted inside a per-spec namespace whose typealiases resolve it:
+
+```swift
+enum _WireOpenAPISpec_OrdersAPI {
+    typealias Operations = OrdersAPI.Operations
+    …
+    struct Conformer: APIProtocol { … }
+}
+```
+
+So a controller writes its own spec's types however it likes, qualified or not. An app may
+also generate one document itself and import another, because a module's own declarations
+win over identically-spelled imported ones.
+
 ## Requires a forked swift-openapi-generator, for now
 
 Operations are dispatched by calling the generated per-operation method on a
-`UniversalServer` built for the request. Stock swift-openapi-generator emits that extension
-`fileprivate`, so it needs a one-line change (`ServerTranslator.swift`,
-`accessModifier: .fileprivate` → `nil`) — `internal` is sufficient, because `WireOpenAPIGen`
-emits into the same module. Until that lands upstream, consumers point at
-[the fork](https://github.com/tachyonics/swift-openapi-generator/tree/swift-wire).
+`UniversalServer` built for the request — the only place an operation's deserializer and
+serializer exist, so dispatching one operation rather than registering a whole document
+requires reaching it. Stock swift-openapi-generator makes that impossible, and the
+[fork](https://github.com/tachyonics/swift-openapi-generator/tree/swift-wire) carries two
+small changes:
+
+- the `UniversalServer` extension is no longer `fileprivate`, so other generated code in the
+  same module can call it;
+- its methods follow the configured `accessModifier:` rather than being internal regardless,
+  as `registerHandlers` in the same file already does — which is what a spec in its own
+  module needs, since its caller is in another module.
+
+Because those methods extend `UniversalServer`, which is `@_spi(Generated)`, they stay SPI
+however public they are declared; the emitted file imports a spec module the same way.
 
 The alternative is to keep one registration and reach the request's subject through a
 task-local, which works on a stock generator. It measured equal at p50 and worse in mean

@@ -33,16 +33,36 @@ struct DirectDispatchEmitter {
     /// it declares and its own controller-scope `@Middleware`; scoping is decided per controller, so a
     /// group may mix request-scoped and app-scoped ones.
     let controllers: [DiscoveredController]
+    /// The module owning this spec's generated types, when they are not this target's own.
+    ///
+    /// Two documents generate two `APIProtocol`s, two `Operations`, two `Servers` — spelled identically,
+    /// because the generator names them from nothing about the document. In a module importing both, a
+    /// bare `Operations.GetTask.Input` is "ambiguous for type lookup", and that includes the spellings
+    /// copied verbatim out of a controller that was unambiguous where it was written. Naming the module
+    /// is what resolves it (spike-28).
+    let specModule: String?
     let operationRoutes: [String: OperationRoute]
     let serverPrefix: ServerPrefix
     let foldEntries: ([String], String) -> [String]
 
-    /// The per-request conformer's type name. Only emitted when some controller is request-scoped;
-    /// otherwise the aggregate proxy conforms directly, holding every subject as a field.
-    var conformer: String { "_WireOpenAPIRequest_\(sanitizedKeyFragment(spec))" }
+    /// The enum this spec's conformer is emitted inside. It exists to carry typealiases: within it, a
+    /// bare `Operations` resolves to *this* spec's module, because a member typealias of an enclosing
+    /// type is found before anything imported. That is what lets the forwarders keep the user's own
+    /// spellings, qualified or not, with two documents in one module.
+    var namespace: String {
+        spec.isEmpty ? "_WireOpenAPISpec" : "_WireOpenAPISpec_\(sanitizedKeyFragment(spec))"
+    }
+
+    /// The conformer, as named from outside its namespace.
+    var conformer: String { "\(namespace).Conformer" }
+
+    /// A generated type of this spec, qualified when it belongs to another module.
+    func qualified(_ name: String) -> String {
+        specModule.map { "\($0).\(name)" } ?? name
+    }
 
     var serverURLArgument: String {
-        serverPrefix == .none ? "" : "serverURL: try Servers.Server1.url(), "
+        serverPrefix == .none ? "" : "serverURL: try \(qualified("Servers")).Server1.url(), "
     }
 
     /// swift-wire names a lone subject positionally (`_wireSubject`, `_wireEnterScope`) and labels each of
@@ -66,12 +86,6 @@ struct DirectDispatchEmitter {
     func conformerField(_ controller: DiscoveredController) -> String {
         "_wireSubject\(suffix(controller))"
     }
-
-    var scopedControllers: [DiscoveredController] { controllers.filter { $0.seed != nil } }
-
-    /// A separate conformer is needed only when something is built per request. With every controller
-    /// app-scoped the aggregate already holds each subject, so it conforms directly.
-    var needsConformer: Bool { !scopedControllers.isEmpty }
 
     /// `operationId` → the controller that declared it and the method implementing it.
     var byOperationID: [String: (controller: DiscoveredController, operation: DiscoveredOperation)] {
@@ -145,87 +159,6 @@ struct DirectDispatchEmitter {
             Data("\(location.file):\(location.line): error: \(message)\n".utf8)
         )
         exit(1)
-    }
-
-    // MARK: - the conformer
-
-    /// The conformer an operation is called through. With a request-scoped controller in the group it is
-    /// built per request; with none, the aggregate itself, which already holds every subject.
-    ///
-    /// Request-scoped fields are optional for two reasons: the server has to be built before any request
-    /// exists, and a request enters only the scope of the controller owning the operation it dispatches —
-    /// entering all of them would construct subjects the request never uses, which is the waste
-    /// per-root reachability exists to avoid. So the other fields are legitimately `nil` and simply never
-    /// read; reaching one means generated code was bypassed, which is a programming error here rather
-    /// than anything a caller can cause.
-    func conformerDeclaration() -> String {
-        let forwarders = controllers.flatMap { controller in
-            controller.operations.map { forwarder(controller, $0) }
-        }
-        guard needsConformer else {
-            return """
-                extension \(proxy): APIProtocol {
-                \(forwarders.joined(separator: "\n\n"))
-                }
-                """
-        }
-        let fields = controllers.map { controller in
-            "    let \(conformerField(controller)): \(controller.typeName)"
-                + (controller.seed != nil ? "?" : "")
-        }
-        return """
-            struct \(conformer): APIProtocol {
-            \(fields.joined(separator: "\n"))
-
-            \(forwarders.joined(separator: "\n\n"))
-            }
-            """
-    }
-
-    /// One operation, forwarded to the controller that declared it.
-    private func forwarder(_ controller: DiscoveredController, _ operation: DiscoveredOperation) -> String {
-        let signature =
-            "    func \(operation.methodName)(_ input: \(operation.inputType)) async throws "
-            + "-> \(operation.outputType) {"
-        // App-scoped inside a conformer, or any subject on a directly-conforming proxy: a stored field.
-        guard needsConformer, controller.seed != nil else {
-            let field = needsConformer ? conformerField(controller) : proxySubjectField(controller)
-            return """
-                \(signature)
-                        try await \(field).\(operation.methodName)(input)
-                    }
-                """
-        }
-        return """
-            \(signature)
-                    guard let wireOpenAPISubject = \(conformerField(controller)) else {
-                        preconditionFailure(
-                            "WireOpenAPI: '\(operation.operationID)' was dispatched with no "
-                                + "request-scoped subject bound. The route terminal binds one "
-                                + "before every call."
-                        )
-                    }
-                    return try await wireOpenAPISubject.\(operation.methodName)(input)
-                }
-            """
-    }
-
-    /// A conformer literal. `binding` names the controller whose subject is held in `wireOpenAPISubject`
-    /// for this request; every other request-scoped field is `nil`, and app-scoped ones come from the
-    /// proxy. Passing `nil` gives the template built at registration.
-    private func conformerLiteral(binding: DiscoveredController?, indent: String) -> String {
-        let arguments = controllers.map { controller -> String in
-            let value: String
-            if controller.seed == nil {
-                value = "self.\(proxySubjectField(controller))"
-            } else if controller.typeName == binding?.typeName {
-                value = "wireOpenAPISubject"
-            } else {
-                value = "nil"
-            }
-            return "\(indent)    \(conformerField(controller)): \(value)"
-        }
-        return "\(conformer)(\n\(arguments.joined(separator: ",\n"))\n\(indent))"
     }
 
     // MARK: - the request path
@@ -344,8 +277,7 @@ struct DirectDispatchEmitter {
             .compactMap { operationID, route -> String? in
                 owners[operationID].map { registerBlock($0.controller, $0.operation, route, indent: "        ") }
             }
-        let templateHandler =
-            needsConformer ? conformerLiteral(binding: nil, indent: "            ") : "self"
+        let templateHandler = conformerLiteral(binding: nil, indent: "            ")
         return """
             extension \(proxy): RouteContributor {
                 func registerWireRoutes<Builder: HTTPServerRouteBuilder>(on builder: inout Builder) throws
