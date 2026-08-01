@@ -15,17 +15,25 @@ import WireMVC
 /// **No base path.** The prefix operations register under belongs to the document's `servers:` block,
 /// which the runtime's `apiPathComponentsWithServerPrefix` applies. With controllers aggregated per spec,
 /// a per-controller path would also be ambiguous the moment two disagreed.
+///
+/// The bare form means **this target's own document** — the one generated alongside these sources. A
+/// document belonging to another module is named with `spec:` below.
 @attached(peer)
 public macro OpenAPIController() =
     #externalMacro(module: "WireOpenAPIMacros", type: "OpenAPIControllerMacro")
 
-/// The multi-spec form. `spec` names the module owning the generated `APIProtocol` — controllers sharing
-/// it land on one proxy, and each distinct value gets its own. Required only when an app serves more than
-/// one document: with a single spec the bare form groups everything together.
+/// The other-module form. `spec` names the module owning the generated `APIProtocol` — controllers sharing
+/// it land on one proxy, and each distinct value gets its own. Use it for a document generated into
+/// another module; for one generated into this target, use the bare form above.
 ///
 /// It is a use-site argument rather than something inferred from where the controller lives, because a
 /// spec's generated types and the controllers implementing it routinely live in different modules — a spec
-/// in `TaskAPI`, its controllers in `TaskClusterApp`.
+/// in `TaskAPI`, its controllers in `TaskClusterApp`. Where the controller is declared therefore says
+/// nothing about which document it implements, which is exactly why this cannot be derived.
+///
+/// A value naming no such dependency is an error. It is never taken as a label and quietly resolved
+/// against this target's own document: that would compile against the wrong document and report it as a
+/// missing `@RawOperation` for operations the author never wrote.
 @attached(peer)
 public macro OpenAPIController(spec: String) =
     #externalMacro(module: "WireOpenAPIMacros", type: "OpenAPIControllerMacro")

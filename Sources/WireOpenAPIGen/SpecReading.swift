@@ -51,10 +51,10 @@ enum ServerPrefix {
 /// identically. Entries with **different paths** have no single answer — picking the first would
 /// silently serve some environments' routes at the wrong prefix — so that is an error rather than a
 /// guess.
-func resolveServerPrefix(specPaths: [String]) -> ServerPrefix {
-    // A target's controllers may live apart from the document that describes them (a spec module and an
-    // app module), in which case there is nothing to read and the default applies.
-    guard specPaths.count == 1, let path = specPaths.first,
+func resolveServerPrefix(specPath: String?) -> ServerPrefix {
+    // A group whose document could not be located reads as "no prefix declared" rather than failing here;
+    // `diagnoseCoverage` reports the missing document, with the controller to point at.
+    guard let path = specPath,
         let contents = try? String(contentsOfFile: path, encoding: .utf8),
         // `Yams.load` returns `Any?`; casting the optional itself rather than its contents silently
         // yields nothing, which is how this first read as "no servers declared".
@@ -97,8 +97,8 @@ struct OperationRoute {
 ///
 /// This is the only source of routing: nothing replays the generated `registerHandlers` to discover what
 /// it would have registered, so the document is read directly and each operation is mounted from it.
-func resolveOperationRoutes(specPaths: [String]) -> [String: OperationRoute] {
-    guard specPaths.count == 1, let path = specPaths.first,
+func resolveOperationRoutes(specPath: String?) -> [String: OperationRoute] {
+    guard let path = specPath,
         let contents = try? String(contentsOfFile: path, encoding: .utf8),
         let loaded = ((try? Yams.load(yaml: contents)) ?? nil),
         let document = loaded as? [String: Any],

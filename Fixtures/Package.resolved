@@ -1,5 +1,5 @@
 {
-  "originHash" : "c8c990a76564eb5947d3eff5bd2c8bbf4c62e3ef077ac63418eadb629d8a411b",
+  "originHash" : "2430a2dc43a806492664dc268acd5b0f9c3c711be65dcc07cc099dd9e527bd06",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -214,7 +214,7 @@
       "location" : "https://github.com/tachyonics/swift-openapi-generator.git",
       "state" : {
         "branch" : "swift-wire",
-        "revision" : "ad4bf5b4b30284cd5590cfb2e8faa99ea79cccc7"
+        "revision" : "9e655e0adb9b993ef4cb29a6aa0dfc59b9b42b09"
       }
     },
     {

@@ -1,0 +1,46 @@
+openapi: 3.1.0
+info:
+  title: Orders
+  version: 1.0.0
+# A different prefix from the Tasks document, so the two cannot be confused by the path alone.
+servers:
+  - url: /api/v2
+paths:
+  /orders/{id}:
+    get:
+      operationId: getOrder
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: An order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+  /orders:
+    get:
+      operationId: listOrders
+      responses:
+        '200':
+          description: Order ids
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+components:
+  schemas:
+    Order:
+      type: object
+      required: [id, item]
+      properties:
+        id:
+          type: string
+        item:
+          type: string

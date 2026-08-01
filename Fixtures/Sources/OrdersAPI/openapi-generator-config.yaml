@@ -1,0 +1,7 @@
+generate:
+  - types
+  - server
+# public, not internal: a spec that lives in its own module has to be usable from the module that mounts
+# it. The single-spec arrangement next door can stay internal, because there everything compiles together.
+accessModifier: public
+namingStrategy: idiomatic
