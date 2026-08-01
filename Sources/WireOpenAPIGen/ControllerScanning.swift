@@ -148,7 +148,7 @@ final class ControllerScanner: SyntaxVisitor {
 
     /// Report and exit — a malformed `@RawOperation` cannot produce a forwarder, and continuing would
     /// emit an incomplete conformance whose error points at generated code instead of the method.
-    private func diagnose(_ message: String, at token: TokenSyntax) -> Void {
+    private func diagnose(_ message: String, at token: TokenSyntax) {
         let line = converter.location(for: token.position).line
         FileHandle.standardError.write(Data("\(file):\(line): error: \(message)\n".utf8))
         exit(1)

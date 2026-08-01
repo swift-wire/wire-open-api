@@ -74,7 +74,6 @@ struct WireOpenAPIGenPlugin: BuildToolPlugin {
                     && $0.lastPathComponent != "openapi-generator-config.yaml"
             }
 
-
         // Built up in statements rather than one `+` chain: the chain grew a term too long for the
         // type checker, which then failed with "unable to type-check this expression in reasonable
         // time" — an error SwiftPM swallows entirely unless you pass `--verbose`.

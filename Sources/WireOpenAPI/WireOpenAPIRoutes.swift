@@ -27,9 +27,10 @@ public enum WireOpenAPIRoutes {
         Reader: AsyncReader & ~Copyable & SendableMetatype,
         Sender: HTTPResponseSender & ~Copyable & SendableMetatype
     >(
-        handler: @escaping @Sendable (HTTPRequest, HTTPBody?, ServerRequestMetadata) async throws -> (
-            HTTPResponse, HTTPBody?
-        ),
+        handler:
+            @escaping @Sendable (HTTPRequest, HTTPBody?, ServerRequestMetadata) async throws -> (
+                HTTPResponse, HTTPBody?
+            ),
         request: HTTPRequest,
         pathParameters: [String: Substring],
         reader: consuming Reader,

@@ -124,7 +124,7 @@ for (spec, controllers) in byGroup.sorted(by: { $0.key < $1.key }) {
         }
     }
 
-    emitDirectDispatch(
+    DirectDispatchEmitter(
         spec: spec,
         proxy: proxyTypeName(for: spec.isEmpty ? nil : spec),
         controller: controller,
@@ -132,9 +132,8 @@ for (spec, controllers) in byGroup.sorted(by: { $0.key < $1.key }) {
         controllerEntries: foldEntries(controller.middleware, indent: "            "),
         operationRoutes: operationRoutes,
         serverPrefix: serverPrefix,
-        foldEntries: foldEntries,
-        into: &lines
-    )
+        foldEntries: foldEntries
+    ).emit(into: &lines)
 }
 
 try (lines.joined(separator: "\n")).write(toFile: outputPath, atomically: true, encoding: .utf8)

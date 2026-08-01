@@ -46,7 +46,11 @@ struct TaskController {
 
     @RawOperation
     func getTask(_ input: Operations.GetTask.Input) async throws -> Operations.GetTask.Output {
-        .ok(.init(body: .json(.init(id: input.path.id, title: "\(store.title(for: input.path.id)) via \(identity.path)"))))
+        .ok(
+            .init(
+                body: .json(.init(id: input.path.id, title: "\(store.title(for: input.path.id)) via \(identity.path)"))
+            )
+        )
     }
 
     /// Route-scope middleware: `Audit` folds around this operation only, inside the controller's
