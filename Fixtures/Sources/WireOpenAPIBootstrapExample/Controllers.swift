@@ -1,3 +1,4 @@
+import HTTPTypes
 import Wire
 import WireMVC
 import WireOpenAPI
@@ -18,20 +19,34 @@ struct TaskStore: Sendable {
     var count: Int { 3 }
 }
 
+/// A request-scoped binding, seeded from the request being served — the same seed type a WireMVC
+/// `@Scoped(seed: HTTPRequest.self)` controller takes, so both kinds of route share one scope model.
+/// Its per-request value is what proves the subject is rebuilt rather than shared.
+@Scoped(seed: HTTPRequest.self)
+struct RequestIdentity: Sendable {
+    let path: String
+
+    @Inject init(seed: HTTPRequest) {
+        self.path = seed.path ?? "/"
+        WireOpenAPITrace.log("scope: constructed for \(self.path)")
+    }
+}
+
 // MARK: - spec-driven
 
 /// `@OpenAPIController` marks it; the plugin collates it onto `_WireOpenAPIContributor_Tasks`, which
 /// carries the `RouteContributor` conformance. No base path here — the prefix is the document's
 /// `servers:` entry (`/api/v1`), which `registerHandlers` reads.
-@Singleton
+@Scoped(seed: HTTPRequest.self)
 @OpenAPIController(spec: "Tasks")
 @Middleware(RequireAPIKeyKeys.factory)
-struct TaskController: APIProtocol {
+struct TaskController {
     @Inject let store: TaskStore
+    @Inject let identity: RequestIdentity
 
     @RawOperation
     func getTask(_ input: Operations.GetTask.Input) async throws -> Operations.GetTask.Output {
-        .ok(.init(body: .json(.init(id: input.path.id, title: store.title(for: input.path.id)))))
+        .ok(.init(body: .json(.init(id: input.path.id, title: "\(store.title(for: input.path.id)) via \(identity.path)"))))
     }
 
     /// Route-scope middleware: `Audit` folds around this operation only, inside the controller's

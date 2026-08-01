@@ -13,6 +13,10 @@ import Synchronization
 /// generated registration against a collector, not by parsing the spec.
 public final class WireOpenAPIOperations: ServerTransport, Sendable {
     /// One captured operation, in the transport's own currency.
+    public typealias Handler = @Sendable (HTTPRequest, HTTPBody?, ServerRequestMetadata) async throws -> (
+        HTTPResponse, HTTPBody?
+    )
+
     public struct Operation: Sendable {
         public let method: HTTPRequest.Method
         public let path: String

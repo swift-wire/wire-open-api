@@ -42,7 +42,15 @@ let package = Package(
             traits: [.defaults, "ServerTransport", "NIOHTTPServer"]
         ),
         .package(url: "https://github.com/tachyonics/swift-wire.git", branch: "main"),
-        .package(url: "https://github.com/apple/swift-openapi-generator", from: "1.0.0"),
+        // Fork, until the access change lands upstream: direct dispatch (`--request-scope=direct`) calls
+        // the generated per-operation methods on `UniversalServer`, which stock swift-openapi-generator
+        // emits `fileprivate`. The branch changes that one `accessModifier` to internal — enough, because
+        // WireOpenAPIGen's output compiles into the same module. Points back at the released package once
+        // upstream takes it.
+        .package(
+            url: "https://github.com/tachyonics/swift-openapi-generator.git",
+            branch: "swift-wire"
+        ),
         .package(url: "https://github.com/apple/swift-openapi-runtime", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-http-api-proposal.git", .upToNextMinor(from: "0.2.0")),
         .package(url: "https://github.com/apple/swift-http-types.git", from: "1.6.0"),
