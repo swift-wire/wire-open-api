@@ -32,11 +32,23 @@ jobs:
       - uses: actions/checkout@v6
       - name: Install dependencies
         # curl: the fixture's generated @main serves indefinitely, so it is probed rather than run to
-        # completion.
-        run: apt-get update && apt-get install -y libssl-dev curl
+        # completion. python3: the naming golden check below.
+        run: apt-get update && apt-get install -y libssl-dev curl python3
       - name: Build
         working-directory: Fixtures
         run: swift build
+      - name: Check the naming golden table against the real generator
+        # Sources/WireOpenAPINaming transcribes swift-openapi-generator's internal SafeNameGenerator,
+        # which the typed shim needs to name generated symbols. A copy does not fail when it is wrong
+        # today; it fails when the original changes and ours does not, and the symptom is "cannot find
+        # type" inside generated code. So this runs the *real* generator over the corpus and diffs the
+        # names it emitted against the checked-in table. The unit tests hold the copy to that table.
+        #
+        # It runs in this job because this is where swift-openapi-generator is already resolved.
+        env:
+          OPENAPI_GENERATOR_PATH: ${{ github.workspace }}/Fixtures/.build/checkouts/swift-openapi-generator
+        run: python3 Scripts/refresh-naming-golden.py --check
+
       - name: Serve an OpenAPI operation and a @Get route from one router
         working-directory: Fixtures
         # The M6d.1 gate. Four plugins run over one target — swift-openapi-generator, WireGen,

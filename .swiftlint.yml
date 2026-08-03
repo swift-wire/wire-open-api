@@ -11,6 +11,12 @@ disabled_rules:
 # InternalImportsByDefault emits unused-import warnings natively instead.
 included:
   - Sources
+excluded:
+  # A transcription of swift-openapi-generator's internal SafeNameGenerator. Kept formatted as upstream
+  # writes it so a future diff against upstream is readable; linting it would mean rewriting it, which is
+  # the one thing that would make it unmaintainable. Its correctness is held by a golden table generated
+  # from the real generator (Scripts/refresh-naming-golden.py), not by style rules.
+  - Sources/WireOpenAPINaming/GeneratorSafeNames.swift
 line_length: 150
 function_body_length:
   warning: 50

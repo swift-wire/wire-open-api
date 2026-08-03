@@ -62,9 +62,13 @@ let package = Package(
             ]
         ),
         // The domain half of the codegen — fills the body hole WireGen leaves on each aggregate proxy.
+        // The copied naming transform, alone in its own target so the copy is obvious and so tests can
+        // reach it — `WireOpenAPIGen` is an executable and cannot be imported.
+        .target(name: "WireOpenAPINaming"),
         .executableTarget(
             name: "WireOpenAPIGen",
             dependencies: [
+                "WireOpenAPINaming",
                 .product(name: "SwiftSyntax", package: "swift-syntax"),
                 .product(name: "SwiftParser", package: "swift-syntax"),
                 .product(name: "Yams", package: "Yams"),
@@ -83,6 +87,7 @@ let package = Package(
                 .product(name: "WireGen", package: "swift-wire"),
             ]
         ),
+        .testTarget(name: "WireOpenAPINamingTests", dependencies: ["WireOpenAPINaming"]),
         .testTarget(
             name: "WireOpenAPIMacrosTests",
             dependencies: [
