@@ -4,7 +4,7 @@ import XCTest
 
 /// Holds the transcribed transform to what swift-openapi-generator actually emits.
 ///
-/// `naming-golden.tsv` is not hand-written: `Scripts/refresh-naming-golden.py` produces it by running the
+/// `naming-golden.tsv` is not hand-written: `swift run NamingGoldenTool` produces it by running the
 /// real generator over `naming-corpus.txt` under both naming strategies and reading back the names it
 /// emitted. So this test asserts *our copy reproduces the generator*, rather than asserting our copy
 /// matches our own expectations — which is the only version of this test worth having, since the failure

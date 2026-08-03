@@ -32,8 +32,8 @@ jobs:
       - uses: actions/checkout@v6
       - name: Install dependencies
         # curl: the fixture's generated @main serves indefinitely, so it is probed rather than run to
-        # completion. python3: the naming golden check below.
-        run: apt-get update && apt-get install -y libssl-dev curl python3
+        # completion.
+        run: apt-get update && apt-get install -y libssl-dev curl
       - name: Build
         working-directory: Fixtures
         run: swift build
@@ -47,7 +47,7 @@ jobs:
         # It runs in this job because this is where swift-openapi-generator is already resolved.
         env:
           OPENAPI_GENERATOR_PATH: ${{ github.workspace }}/Fixtures/.build/checkouts/swift-openapi-generator
-        run: python3 Scripts/refresh-naming-golden.py --check
+        run: swift run NamingGoldenTool --check
 
       - name: Serve an OpenAPI operation and a @Get route from one router
         working-directory: Fixtures

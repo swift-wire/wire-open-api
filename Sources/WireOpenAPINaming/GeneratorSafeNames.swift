@@ -25,7 +25,7 @@ import Foundation
 // **The risk this carries, and the mitigation.** A copied algorithm does not fail when it is wrong today;
 // it fails when the original changes and ours does not, and the symptom is "cannot find type
 // `Operations.Foo`" inside generated code. So the check that matters is not a unit test of our
-// expectations — it is `Scripts/refresh-naming-golden.sh`, which runs the *real generator* over a corpus
+// expectations — it is ``swift run NamingGoldenTool``, which runs the *real generator* over a corpus
 // document, extracts the names it actually produced, and diffs them against `naming-golden.tsv`. CI runs
 // it. A generator bump that changes naming therefore fails with a name-by-name diff.
 //

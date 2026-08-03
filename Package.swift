@@ -65,6 +65,16 @@ let package = Package(
         // The copied naming transform, alone in its own target so the copy is obvious and so tests can
         // reach it — `WireOpenAPIGen` is an executable and cannot be imported.
         .target(name: "WireOpenAPINaming"),
+        // Regenerates the naming golden table by running the real generator. A tool rather than a test
+        // so it can run the generator as a subprocess: linking it would pull the generator and OpenAPIKit
+        // into this package's resolution for one check.
+        .executableTarget(
+            name: "NamingGoldenTool",
+            dependencies: [
+                .product(name: "SwiftSyntax", package: "swift-syntax"),
+                .product(name: "SwiftParser", package: "swift-syntax"),
+            ]
+        ),
         .executableTarget(
             name: "WireOpenAPIGen",
             dependencies: [
