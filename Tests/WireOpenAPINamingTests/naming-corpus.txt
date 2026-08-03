@@ -1,0 +1,76 @@
+# Documented names under test, used both as operationIds (type names) and as parameter names (members).
+# Each line is one name. Shapes are grouped by what makes them interesting; add to this list rather than
+# to the golden table, which is generated from the real generator by Scripts/refresh-naming-golden.py.
+
+# already-idiomatic identifiers — the common house style
+getTask
+listOrders
+getTaskV2
+task2
+get2Tasks
+page
+id
+userId
+userID
+filter
+description
+a
+x9
+
+# acronyms: the case where "capitalise the first letter" diverges
+getHTTPTask
+httpProxyURL
+HTTPProxyURL
+URLSession
+URLPath
+
+# leading capitals and all-caps
+Task
+GetTask
+getTASK
+GETTASK
+ABC
+Id
+ID
+GET_TASK
+HELLO_WORLD
+
+# separators
+get_task
+get-task
+get.task
+get/task
+get+task
+user-id
+user_id
+X-Request-Id
+a.b
+
+# leading underscore and digits
+_getTask
+__getTask
+9lives
+1
+
+# Swift keywords and reserved type names
+class
+default
+func
+init
+self
+Self
+Type
+type
+Any
+any
+protocol
+Protocol
+Error
+String
+Int
+Optional
+Sendable
+
+# braces and other characters the generator has explicit handling for
+tasks{id}
+$filter

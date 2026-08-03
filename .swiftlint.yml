@@ -6,11 +6,20 @@ disabled_rules:
   # WireOpenAPIMVC require), which this rule disagrees with. Cede formatting to the
   # formatter — the same resolution wire-mvc reached.
   - opening_brace
+  # Same resolution, same reason: swift-format adds a trailing comma to every multi-line collection
+  # literal and re-adds it if removed, so the two tools cannot both be satisfied. The formatter wins.
+  - trailing_comma
 # The `unused_import` analyzer rule is gone with the 6.4 move: it drives SourceKit against the
 # compiler build log, whose 6.4-only flags SwiftLint's SourceKit rejects. On 6.4 the compiler's own
 # InternalImportsByDefault emits unused-import warnings natively instead.
 included:
   - Sources
+excluded:
+  # A transcription of swift-openapi-generator's internal SafeNameGenerator. Kept formatted as upstream
+  # writes it so a future diff against upstream is readable; linting it would mean rewriting it, which is
+  # the one thing that would make it unmaintainable. Its correctness is held by a golden table generated
+  # from the real generator (Scripts/refresh-naming-golden.py), not by style rules.
+  - Sources/WireOpenAPINaming/GeneratorSafeNames.swift
 line_length: 150
 function_body_length:
   warning: 50
