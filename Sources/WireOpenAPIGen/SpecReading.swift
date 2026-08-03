@@ -1,4 +1,5 @@
 import Foundation
+import WireOpenAPINaming
 import Yams
 
 // What the codegen needs from the OpenAPI document itself: the server prefix an operation registers
@@ -91,6 +92,31 @@ func resolveServerPrefix(specPath: String?) -> ServerPrefix {
 struct OperationRoute {
     let method: String
     let path: String
+    /// The operation's declared parameters, which is what tells the typed shim whether a handler
+    /// parameter reads `input.path.x`, `input.query.x` or `input.headers.x`. The document is the only
+    /// authority for that: a binding annotation restating it could disagree with it.
+    let parameters: [SpecParameter]
+}
+
+/// One `parameters:` entry — its documented name and where it lives.
+struct SpecParameter {
+    let name: String
+    let location: Location
+
+    /// The `Input` member each location is reached through. `headers` is plural; the other two are not.
+    enum Location: String {
+        case path
+        case query
+        case header
+
+        var inputMember: String {
+            switch self {
+            case .path: return "path"
+            case .query: return "query"
+            case .header: return "headers"
+            }
+        }
+    }
 }
 
 /// `operationId` → where it registers, read from the document.
@@ -107,13 +133,46 @@ func resolveOperationRoutes(specPath: String?) -> [String: OperationRoute] {
 
     var routes: [String: OperationRoute] = [:]
     for (specPath, item) in paths {
-        guard let operations = item as? [String: Any] else { continue }
+        guard let item = item as? [String: Any] else { continue }
+        let operations = item
         for (method, operation) in operations {
             guard let operation = operation as? [String: Any],
                 let operationID = operation["operationId"] as? String
             else { continue }
-            routes[operationID] = OperationRoute(method: method.uppercased(), path: specPath)
+            // Path-level parameters apply to every operation under that path, so both lists are read.
+            let declared =
+                (item["parameters"] as? [[String: Any]] ?? []) + (operation["parameters"] as? [[String: Any]] ?? [])
+            let parameters = declared.compactMap { entry -> SpecParameter? in
+                guard let name = entry["name"] as? String,
+                    let rawLocation = entry["in"] as? String,
+                    let location = SpecParameter.Location(rawValue: rawLocation)
+                else { return nil }
+                return SpecParameter(name: name, location: location)
+            }
+            routes[operationID] = OperationRoute(
+                method: method.uppercased(),
+                path: specPath,
+                parameters: parameters
+            )
         }
     }
     return routes
+}
+
+// MARK: - the naming strategy
+
+/// The strategy a document is generated with, read from its `openapi-generator-config.yaml`.
+///
+/// It has to be read rather than assumed: it changes the spelling of every generated symbol the typed
+/// shim names, and the generator's default is **defensive**, not idiomatic — so a config that simply
+/// omits the key is not the arrangement most examples show.
+func resolveNamingStrategy(configPath: String?) -> GeneratorNamingStrategy {
+    guard let configPath,
+        let contents = try? String(contentsOfFile: configPath, encoding: .utf8),
+        let loaded = ((try? Yams.load(yaml: contents)) ?? nil),
+        let document = loaded as? [String: Any],
+        let raw = document["namingStrategy"] as? String,
+        let strategy = GeneratorNamingStrategy(rawValue: raw)
+    else { return .generatorDefault }
+    return strategy
 }

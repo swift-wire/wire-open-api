@@ -37,6 +37,8 @@ var localSpecPath: String?
 /// value naming one of these says its generated `APIProtocol` is that module's, which is what lets an app
 /// serve two documents whose generated types are spelled identically.
 var moduleSpecPaths: [String: String] = [:]
+/// The generator config beside each document, keyed the same way — `""` for this target's own.
+var specConfigPaths: [String: String] = [:]
 var sourcePaths: [String] = []
 var index = 0
 while index < arguments.count {
@@ -47,6 +49,12 @@ while index < arguments.count {
     case "--spec-module":
         index += 2
         if index < arguments.count { moduleSpecPaths[arguments[index - 1]] = arguments[index] }
+    case "--spec-config":
+        index += 1
+        if index < arguments.count { specConfigPaths[""] = arguments[index] }
+    case "--spec-module-config":
+        index += 2
+        if index < arguments.count { specConfigPaths[arguments[index - 1]] = arguments[index] }
     case "--import":
         index += 1
         if index < arguments.count { imports.append(arguments[index]) }
@@ -152,6 +160,7 @@ for (spec, controllers) in byGroup.sorted(by: { $0.key < $1.key }) where !contro
         specModule: specModule,
         operationRoutes: resolveOperationRoutes(specPath: specPath),
         serverPrefix: resolveServerPrefix(specPath: specPath),
+        namingStrategy: resolveNamingStrategy(configPath: specConfigPaths[spec]),
         foldEntries: foldEntries
     ).emit(into: &lines)
 }

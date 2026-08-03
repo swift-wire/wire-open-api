@@ -33,6 +33,20 @@ paths:
                 type: array
                 items:
                   type: string
+  /tasks/{id}/summary:
+    get:
+      operationId: summariseTask
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: include-done, in: query, required: false, schema: { type: boolean } }
+        - { name: X-Request-Id, in: header, required: false, schema: { type: string } }
+      responses:
+        '200':
+          description: A task summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
 components:
   schemas:
     Task:

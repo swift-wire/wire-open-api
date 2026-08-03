@@ -1,4 +1,5 @@
 import Foundation
+import WireOpenAPINaming
 
 // The conformer half of a spec's emission: the type an operation is actually called through, and the
 // namespace that keeps two documents' identically-spelled generated types apart.
@@ -52,15 +53,24 @@ extension DirectDispatchEmitter {
     }
 
     /// One operation, forwarded to the controller that declared it.
+    ///
+    /// The conformer implements the *generated* requirement, whose name comes from the operationId
+    /// through the safe-name transform — not from the author's method name, which they are free to
+    /// choose. For `getTask` the two coincide; for `@RawOperation("get-task")` under the defensive
+    /// strategy they do not.
     private func forwarder(_ controller: DiscoveredController, _ operation: DiscoveredOperation) -> String {
+        let requirement = GeneratorSafeNames.swiftMemberName(for: operation.operationID, strategy: namingStrategy)
+        let inputType = operation.inputType ?? "\(operationNamespace(operation)).Input"
+        let outputType = operation.outputType ?? "\(operationNamespace(operation)).Output"
         let signature =
-            "    func \(operation.methodName)(_ input: \(operation.inputType)) async throws "
-            + "-> \(operation.outputType) {"
+            "    func \(requirement)(_ input: \(inputType)) async throws "
+            + "-> \(outputType) {"
+        let body = callAndReturn(operation, subject: "wireOpenAPISubject")
         // App-scoped: a stored field, populated once when the template is built.
         guard controller.seed != nil else {
             return """
                 \(signature)
-                        try await \(conformerField(controller)).\(operation.methodName)(input)
+                \(callAndReturn(operation, subject: conformerField(controller), indent: "        "))
                     }
                 """
         }
@@ -73,9 +83,54 @@ extension DirectDispatchEmitter {
                                 + "before every call."
                         )
                     }
-                    return try await wireOpenAPISubject.\(operation.methodName)(input)
+            \(body)
                 }
             """
+    }
+
+    /// `Operations.<X>` for an operation, spelled as this spec's namespace resolves it.
+    private func operationNamespace(_ operation: DiscoveredOperation) -> String {
+        "Operations.\(GeneratorSafeNames.swiftTypeName(for: operation.operationID, strategy: namingStrategy))"
+    }
+
+    /// The call into the controller, and what to do with what comes back.
+    ///
+    /// Raw: the `Input` goes straight through. Typed: each parameter is read from the `Input` member the
+    /// document says it lives in, and the return value is wrapped in the operation's response — which is
+    /// the decomposition the shim exists to perform.
+    private func callAndReturn(
+        _ operation: DiscoveredOperation,
+        subject: String,
+        indent: String = "        "
+    ) -> String {
+        guard operation.isTyped else {
+            return "\(indent)return try await \(subject).\(operation.methodName)(input)"
+        }
+        let arguments = operation.parameters.map { parameter -> String in
+            let label = parameter.label.map { "\($0): " } ?? ""
+            return "\(label)input.\(inputMember(for: parameter, in: operation))"
+        }
+        return """
+            \(indent)let wireOpenAPIResult = try await \(subject).\(operation.methodName)(\(arguments.joined(separator: ", ")))
+            \(indent)return .ok(.init(body: .json(wireOpenAPIResult)))
+            """
+    }
+
+    /// `path.id` / `query.includeDone` / `headers.xRequestId` — the location from the *document*, the
+    /// member spelling from the transform.
+    private func inputMember(for parameter: BoundParameter, in operation: DiscoveredOperation) -> String {
+        let member = GeneratorSafeNames.swiftMemberName(for: parameter.documentedName, strategy: namingStrategy)
+        let location = operationRoutes[operation.operationID]?
+            .parameters
+            .first { $0.name == parameter.documentedName }?
+            .location
+        // `diagnoseTypedBindings` has already rejected a name the document does not declare and a
+        // location it contradicts, so this fallback is unreachable; it keeps emission total.
+        let fallback: SpecParameter.Location =
+            parameter.binding == "Path"
+            ? .path
+            : parameter.binding == "Query" ? .query : .header
+        return "\((location ?? fallback).inputMember).\(member)"
     }
 
     /// A conformer literal. `binding` names the controller whose subject is held in `wireOpenAPISubject`

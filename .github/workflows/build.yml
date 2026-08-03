@@ -100,6 +100,10 @@ jobs:
           # because the bare spelling here means this target's own document.
           summary=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/api/v2/orders)
           crossed2=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/v2/tasks)
+          # The typed shim: parameters bound from all three locations, no generated Input in the handler.
+          typed=$(curl -s -H 'X-Request-Id: abc123' \
+            "http://127.0.0.1:8080/api/v1/tasks/9/summary?include-done=true" -w ' [%{http_code}]')
+          typedBare=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/api/v1/tasks/9/summary)
           kill "$pid" 2>/dev/null || true
           [ "$ok" = 1 ] || { echo "the fixture did not bind"; cat serverlog.txt; exit 1; }
           echo "GET /api/v1/tasks/42 → $openapi"
@@ -110,6 +114,7 @@ jobs:
           echo "GET /api/v1/orders/7 → $crossed (expect 404: that prefix belongs to the other document)"
           echo "GET /api/v2/orders   → $summary"
           echo "GET /api/v2/tasks    → $crossed2 (expect 404: likewise, in the other direction)"
+          echo "GET .../summary      → $typed"
           # Foundation escapes `/` as `\/` in JSON output; strip the backslashes rather than write
           # patterns that `case` would itself treat as escapes.
           plain() { printf '%s' "$1" | tr -d '\\'; }
@@ -184,6 +189,21 @@ jobs:
             *) echo "the cross-module controller's operation did not serve"; exit 1;;
           esac
           [ "$crossed2" = 404 ] || { echo "one document's prefix served the other's operation"; exit 1; }
+          # `@Operation` — the typed shim. `id` comes from the path, `include-done` from the query and
+          # `X-Request-Id` from a header, each read from the `Input` member the *document* places it in,
+          # under member names only the safe-name transform produces (`includeDone`, `xRequestId`). A
+          # binding that read the wrong location, or spelled a member by convention, would serve a
+          # default here rather than fail.
+          case "$typed" in
+            *'"title" : "summary of task-9 done=true req=abc123"'*"[200]") ;;
+            *) echo "the typed operation did not bind its parameters"; exit 1;;
+          esac
+          # Absent optionals stay absent rather than becoming empty strings.
+          case "$typedBare" in
+            *'"title" : "summary of task-9 done=false req=-"'*"[200]") ;;
+            *) echo "the typed operation mishandled absent optional parameters"; exit 1;;
+          esac
+
           # It is app-scoped, so it enters no request scope even though its sibling in OrdersAPI does.
           grep -q '^scope: order trace for /api/v2/orders$' serverlog.txt \
             && { echo "an app-scoped controller's operation entered a request scope"; exit 1; } || true

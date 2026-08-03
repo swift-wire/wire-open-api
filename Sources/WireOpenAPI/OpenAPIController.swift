@@ -78,3 +78,28 @@ public macro RawOperation() =
 @attached(peer)
 public macro RawOperation(_ operationID: String) =
     #externalMacro(module: "WireOpenAPIMacros", type: "OpenAPIControllerMacro")
+
+/// Marks a **typed** operation handler — one taking the operation's parameters as ordinary Swift
+/// arguments and returning its response body — and declares which operation it implements.
+///
+/// Where `@RawOperation` hands the method the generated `Operations.X.Input` and takes back its `Output`,
+/// this generates the decomposition: parameters are bound from `input.path` / `input.query` /
+/// `input.headers` and the return value is wrapped in the operation's response. The two coexist per
+/// method, so a controller can migrate one operation at a time and keep `@RawOperation` for the ones the
+/// annotation set cannot express.
+///
+/// Parameters are bound with the **same** `@Path` / `@Query` / `@Header` wrappers a WireMVC `@Get` route
+/// uses — the same types, not a parallel set — which is the whole point of the unification: one binding
+/// vocabulary whether a route came from a document or from an annotation.
+///
+/// Bare, the method's own name is the operationId.
+@attached(peer)
+public macro Operation() =
+    #externalMacro(module: "WireOpenAPIMacros", type: "OpenAPIControllerMacro")
+
+/// The renamed form: `@Operation("get-task")` when the method name is not the operationId — which is
+/// also the case that needs it, since the generated requirement is named by the safe-name transform and
+/// `get-task` is not a Swift identifier.
+@attached(peer)
+public macro Operation(_ operationID: String) =
+    #externalMacro(module: "WireOpenAPIMacros", type: "OpenAPIControllerMacro")

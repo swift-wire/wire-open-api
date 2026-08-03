@@ -1,4 +1,5 @@
 import Foundation
+import WireOpenAPINaming
 
 // Mounting a spec's operations as WireMVC routes, dispatched directly.
 //
@@ -43,6 +44,10 @@ struct DirectDispatchEmitter {
     let specModule: String?
     let operationRoutes: [String: OperationRoute]
     let serverPrefix: ServerPrefix
+    /// How this document's symbols are spelled. Read from its generator config rather than assumed —
+    /// `GeneratorSafeNames` turns an operationId into `Operations.<X>` and a parameter name into an
+    /// `Input` member, and the two strategies disagree about both.
+    let namingStrategy: GeneratorNamingStrategy
     let foldEntries: ([String], String) -> [String]
 
     /// The enum this spec's conformer is emitted inside. It exists to carry typealiases: within it, a
@@ -121,6 +126,7 @@ struct DirectDispatchEmitter {
             )
         }
         diagnoseDuplicates()
+        diagnoseTypedBindings()
         let marked = byOperationID
         let missing = operationRoutes.keys.filter { marked[$0] == nil }.sorted()
         guard !missing.isEmpty else { return }
@@ -151,6 +157,44 @@ struct DirectDispatchEmitter {
             '\(operationID)'. One operation is mounted once, so exactly one controller may implement it.
             """
         )
+    }
+
+    /// A typed operation's bindings are checked against the document, which is the authority on where a
+    /// parameter lives. Two ways they disagree, both silent otherwise: a name the document does not
+    /// declare would read a member that does not exist ("no member" inside generated code), and a
+    /// location the document contradicts would read the wrong one — `@Query` on something the spec puts
+    /// in the path compiles perfectly and serves nothing.
+    private func diagnoseTypedBindings() {
+        for controller in controllers {
+            for operation in controller.operations where operation.isTyped {
+                guard let route = operationRoutes[operation.operationID] else { continue }
+                for parameter in operation.parameters {
+                    guard let declared = route.parameters.first(where: { $0.name == parameter.documentedName })
+                    else {
+                        let known = route.parameters.map { "'\($0.name)' (\($0.location.rawValue))" }
+                            .sorted()
+                            .joined(separator: ", ")
+                        fail(
+                            """
+                            @Operation '\(operation.operationID)' binds '\(parameter.documentedName)', which \
+                            the document does not declare. It declares \(known.isEmpty ? "no parameters" : known). \
+                            Name the documented parameter — @\(parameter.binding)("the-name") — if the Swift \
+                            name differs.
+                            """
+                        )
+                    }
+                    let annotated = parameter.binding.lowercased()
+                    guard annotated != declared.location.rawValue else { continue }
+                    fail(
+                        """
+                        @Operation '\(operation.operationID)' annotates '\(parameter.documentedName)' as \
+                        @\(parameter.binding), but the document puts it in \(declared.location.rawValue). The \
+                        document decides where a parameter lives; the annotation only says which one this is.
+                        """
+                    )
+                }
+            }
+        }
     }
 
     private func fail(_ message: String) -> Never {

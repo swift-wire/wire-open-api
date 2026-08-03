@@ -75,6 +75,26 @@ struct TaskController {
 struct TaskListController {
     @Inject let store: TaskStore
 
+    /// The **typed** form. No `Operations.SummariseTask.Input` in sight: the parameters are bound from
+    /// the document's `path`, `query` and `header` entries, and the return value is wrapped in the
+    /// operation's response. The wrappers are WireMVC's own — the same `@Path`/`@Query`/`@Header` a `@Get`
+    /// route uses, which is the unification this milestone is for.
+    ///
+    /// The names show why the binding cannot be spelling-by-convention: `include-done` and `X-Request-Id`
+    /// reach the generated `Input` as `includeDone` and `xRequestId` under the idiomatic strategy, and as
+    /// `include_hyphen_done` and `X_hyphen_Request_hyphen_Id` under the defensive one.
+    @Operation
+    func summariseTask(
+        @Path id: String,
+        @Query("include-done") includeDone: Bool?,
+        @Header("X-Request-Id") requestID: String?
+    ) async throws -> Components.Schemas.Task {
+        .init(
+            id: id,
+            title: "summary of \(store.title(for: id)) done=\(includeDone ?? false) req=\(requestID ?? "-")"
+        )
+    }
+
     /// Route-scope middleware: `Audit` folds around this operation only. `@RawOperation` is what ties the
     /// method to the document's `listTasks`.
     @RawOperation
