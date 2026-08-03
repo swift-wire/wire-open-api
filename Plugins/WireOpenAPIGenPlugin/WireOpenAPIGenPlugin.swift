@@ -33,7 +33,7 @@ struct WireOpenAPIGenPlugin: BuildToolPlugin {
         // every Wire-aware dependency (one that ships a `_WireExports.swift` marker) so its bindings and
         // controllers compose into this consumer. Both tools read the same set — a controller may live in a
         // shared library while its proxy is emitted here.
-        var dependencyGroups: [(module: String, sources: [URL], specs: [URL], isExternal: Bool)] = []
+        var dependencyGroups: [(module: String, sources: [URL], specs: [URL], configs: [URL], isExternal: Bool)] = []
         var seenModules: Set<String> = []
         for dependency in target.dependencies {
             let dependencyTargets: [Target]
@@ -65,6 +65,7 @@ struct WireOpenAPIGenPlugin: BuildToolPlugin {
                         dependencyModule.moduleName,
                         dependencySources,
                         openAPIDocuments(in: dependencyModule),
+                        openAPIConfigs(in: dependencyModule),
                         isExternal
                     )
                 )
@@ -78,6 +79,9 @@ struct WireOpenAPIGenPlugin: BuildToolPlugin {
         // The document itself, so the generated witness can name its server prefix. A *source* file of
         // the target, never the OpenAPI generator's output — reading that would be an undeclared input.
         let specs = openAPIDocuments(in: sourceModule)
+        // The generator's own config, for `namingStrategy`: it decides the spelling of every generated
+        // symbol the typed shim names, and its default is defensive rather than idiomatic.
+        let specConfigs = openAPIConfigs(in: sourceModule)
 
         // Built up in statements rather than one `+` chain: the chain grew a term too long for the
         // type checker, which then failed with "unable to type-check this expression in reasonable
@@ -88,6 +92,12 @@ struct WireOpenAPIGenPlugin: BuildToolPlugin {
         // `@OpenAPIController(spec: "<module>")` names it and the emitted conformer qualifies against it.
         for group in dependencyGroups {
             for spec in group.specs { openAPIGenArguments += ["--spec-module", group.module, spec.path] }
+        }
+        for config in specConfigs { openAPIGenArguments += ["--spec-config", config.path] }
+        for group in dependencyGroups {
+            for config in group.configs {
+                openAPIGenArguments += ["--spec-module-config", group.module, config.path]
+            }
         }
         for group in dependencyGroups { openAPIGenArguments += ["--import", group.module] }
         openAPIGenArguments += ["--module", sourceModule.moduleName]
@@ -105,7 +115,8 @@ struct WireOpenAPIGenPlugin: BuildToolPlugin {
                 // swift-openapi-generator and not this tool, so the emitted `serverURL` — and, later, any
                 // spec-derived diagnostic — would be computed against the previous document. Spike-28
                 // recorded exactly this hazard; the fix is one line and easy to omit.
-                inputFiles: allInputFiles + specs + dependencyGroups.flatMap(\.specs),
+                inputFiles: allInputFiles + specs + specConfigs + dependencyGroups.flatMap(\.specs)
+                    + dependencyGroups.flatMap(\.configs),
                 outputFiles: [handlersURL]
             )
         ]
@@ -121,4 +132,12 @@ private func openAPIDocuments(in module: SourceModuleTarget) -> [URL] {
             ["yaml", "yml", "json"].contains($0.pathExtension)
                 && $0.lastPathComponent != "openapi-generator-config.yaml"
         }
+}
+
+/// A module's swift-openapi-generator config. Read for `namingStrategy`, and declared as an input so a
+/// change of strategy re-runs this tool rather than only the generator.
+private func openAPIConfigs(in module: SourceModuleTarget) -> [URL] {
+    module.sourceFiles
+        .map(\.url)
+        .filter { $0.lastPathComponent == "openapi-generator-config.yaml" }
 }

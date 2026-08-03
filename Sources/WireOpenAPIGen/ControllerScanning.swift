@@ -23,8 +23,34 @@ struct DiscoveredOperation {
     /// codegen never has to derive `Operations.GetTask.Input` from the operationId `getTask` — a
     /// derivation that is identity for some specs and not others.
     let methodName: String
-    let inputType: String
-    let outputType: String
+    /// `@RawOperation`: the `Input`/`Output` spellings exactly as written. Nil for a typed operation,
+    /// which never names them — that is the point of the shim.
+    let inputType: String?
+    let outputType: String?
+    /// `@Operation`: the parameters to bind and the response body type. Empty and nil for a raw one.
+    let parameters: [BoundParameter]
+    let returnType: String?
+
+    /// Whether this operation is bound by the typed shim rather than handed the generated `Input`.
+    var isTyped: Bool { returnType != nil }
+}
+
+/// One handler parameter and the `Input` location it reads.
+///
+/// The wrappers are WireMVC's — `@Path`, `@Query`, `@Header` — so a binding vocabulary is not invented
+/// twice. What differs is where the value comes from: WireMVC's `RequestBound.bind` decodes it from the
+/// request, while here the generator has already decoded it into `input.path.x` and the shim only has to
+/// name that member.
+struct BoundParameter {
+    /// `Path`, `Query` or `Header`.
+    let binding: String
+    /// The documented parameter name: `@Path("user-id")` when given, the parameter's own name otherwise —
+    /// the same rule WireMVC's route codegen applies.
+    let documentedName: String
+    /// The call-site label, or nil when the parameter is unlabelled.
+    let label: String?
+    /// The parameter's own name, used as the documented name when the attribute gives none.
+    let name: String
 }
 
 struct DiscoveredController {
@@ -110,10 +136,12 @@ final class ControllerScanner: SyntaxVisitor {
         for member in members.members {
             guard let function = member.decl.as(FunctionDeclSyntax.self) else { continue }
             var operationID: String?
+            var isTyped = false
             for element in function.attributes {
-                guard let attribute = element.as(AttributeSyntax.self),
-                    attribute.attributeName.trimmedDescription == "RawOperation"
-                else { continue }
+                guard let attribute = element.as(AttributeSyntax.self) else { continue }
+                let name = attribute.attributeName.trimmedDescription
+                guard name == "RawOperation" || name == "Operation" else { continue }
+                isTyped = name == "Operation"
                 operationID = function.name.text
                 if case .argumentList(let list) = attribute.arguments, let first = list.first {
                     operationID =
@@ -122,6 +150,10 @@ final class ControllerScanner: SyntaxVisitor {
                 }
             }
             guard let operationID else { continue }
+            if isTyped {
+                found.append(typedOperation(operationID, function))
+                continue
+            }
             let parameters = function.signature.parameterClause.parameters
             guard parameters.count == 1, let parameter = parameters.first,
                 let returnType = function.signature.returnClause?.type
@@ -131,7 +163,6 @@ final class ControllerScanner: SyntaxVisitor {
                         + "its Output — that is the shape the generated operation method dispatches to.",
                     at: function.name
                 )
-                continue
             }
             found.append(
                 DiscoveredOperation(
@@ -139,16 +170,72 @@ final class ControllerScanner: SyntaxVisitor {
                     middleware: middlewareArguments(of: function.attributes),
                     methodName: function.name.text,
                     inputType: parameter.type.trimmedDescription,
-                    outputType: returnType.trimmedDescription
+                    outputType: returnType.trimmedDescription,
+                    parameters: [],
+                    returnType: nil
                 )
             )
         }
         return found
     }
 
+    /// An `@Operation` method: every parameter carries a binding wrapper, and the return type is the
+    /// response body the shim wraps.
+    private func typedOperation(_ operationID: String, _ function: FunctionDeclSyntax) -> DiscoveredOperation {
+        guard let returnType = function.signature.returnClause?.type else {
+            diagnose(
+                "@Operation '\(operationID)' must return the operation's response body. A handler with no "
+                    + "response is not expressible yet — use @RawOperation.",
+                at: function.name
+            )
+        }
+        var parameters: [BoundParameter] = []
+        for parameter in function.signature.parameterClause.parameters {
+            var binding: String?
+            var documented: String?
+            for element in parameter.attributes {
+                guard let attribute = element.as(AttributeSyntax.self) else { continue }
+                let name = attribute.attributeName.trimmedDescription
+                guard ["Path", "Query", "Header"].contains(name) else { continue }
+                binding = name
+                if case .argumentList(let list) = attribute.arguments, let first = list.first {
+                    documented = first.expression.as(StringLiteralExprSyntax.self)?.representedLiteralValue
+                }
+            }
+            // The parameter's own name is `secondName` when it has both, e.g. `_ id: String`.
+            let ownName = (parameter.secondName ?? parameter.firstName).text
+            guard let binding else {
+                diagnose(
+                    "parameter '\(ownName)' of @Operation '\(operationID)' needs a binding annotation — "
+                        + "one of @Path, @Query, @Header. The document says where each parameter lives; "
+                        + "the annotation says which one this is.",
+                    at: parameter.firstName
+                )
+            }
+            let label = parameter.firstName.text == "_" ? nil : parameter.firstName.text
+            parameters.append(
+                BoundParameter(
+                    binding: binding,
+                    documentedName: documented ?? ownName,
+                    label: label,
+                    name: ownName
+                )
+            )
+        }
+        return DiscoveredOperation(
+            operationID: operationID,
+            middleware: middlewareArguments(of: function.attributes),
+            methodName: function.name.text,
+            inputType: nil,
+            outputType: nil,
+            parameters: parameters,
+            returnType: returnType.trimmedDescription
+        )
+    }
+
     /// Report and exit — a malformed `@RawOperation` cannot produce a forwarder, and continuing would
     /// emit an incomplete conformance whose error points at generated code instead of the method.
-    private func diagnose(_ message: String, at token: TokenSyntax) {
+    private func diagnose(_ message: String, at token: TokenSyntax) -> Never {
         let line = converter.location(for: token.position).line
         FileHandle.standardError.write(Data("\(file):\(line): error: \(message)\n".utf8))
         exit(1)
