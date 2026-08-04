@@ -12,6 +12,11 @@ import WireOpenAPI
 // ordinary WireMVC controller. Both collate into `WireMVCKeys.routeContributors`, so the generated
 // `@main` serves them the same way, under the same `@NotFound` and the same global middleware.
 
+/// Errors a handler throws, mapped to responses by `@ErrorResponse`. Ordinary types: nothing about them
+/// knows they will be mapped, which is the point — the mapping lives at the route, not in the error.
+struct NoSuchTask: Error {}
+struct NotAuthorised: Error {}
+
 /// An app-scoped dependency both controllers share, so the fixture also shows one graph behind both.
 @Singleton
 struct TaskStore: Sendable {
@@ -30,7 +35,7 @@ struct RequestIdentity: Sendable {
 
     @Inject init(seed: HTTPRequest) {
         self.path = seed.path ?? "/"
-        print("scope: constructed for \(self.path)")
+        trace("scope: constructed for \(self.path)")
     }
 }
 
@@ -72,6 +77,14 @@ struct TaskController {
 /// the same app-scoped `TaskStore`, so one graph sits behind the whole spec.
 @Singleton
 @OpenAPIController()
+// Controller scope: covers every operation this controller owns *except* those that map the same error
+// themselves. `summariseTask` does, so it is not covered — which is what makes it an ordering test.
+@ErrorResponse(NoSuchTask.self, .internalServerError)
+// Matched at the *terminal*, not in the forwarder: a body the generator could not parse fails before the
+// handler is ever called, so no clause inside it could see this. `DecodingError` is the standard
+// library's, which is why it needs no vocabulary of ours — and mapping it here answers 422 where the
+// runtime's own default is 400.
+@ErrorResponse(DecodingError.self, .unprocessableContent)
 struct TaskListController {
     @Inject let store: TaskStore
 
@@ -83,13 +96,29 @@ struct TaskListController {
     /// The names show why the binding cannot be spelling-by-convention: `include-done` and `X-Request-Id`
     /// reach the generated `Input` as `includeDone` and `xRequestId` under the idiomatic strategy, and as
     /// `include_hyphen_done` and `X_hyphen_Request_hyphen_Id` under the defensive one.
+    /// `@ErrorResponse` on an OpenAPI operation, mapping a thrown error to a response the **document
+    /// declares** — so the generator serialises it exactly as it would a success. 404 carries no body
+    /// here, which is what lets a status-only mapping construct it; a documented body would be rejected.
+    ///
+    /// The controller below maps `NoSuchTask` too, to a different status — this one wins, because route
+    /// scope folds inside controller scope and the first match takes it. `NotAuthorised` has no route
+    /// mapping, so the controller's applies, and it names a status the document does *not* declare, which
+    /// becomes `.undocumented(statusCode:)` — the generated escape, still a real response rather than a
+    /// dropped connection.
     @Operation
+    // The document's 404 carries a `Problem`, so a status alone cannot construct it — this is the form
+    // that can, and the pair form is rejected here. Where the document declares no body, the reverse
+    // holds. The document picks; the author cannot pick wrong without being told.
+    @ErrorResponse(NoSuchTask.self, .notFound, { _ in Components.Schemas.Problem(message: "no such task") })
+    @ErrorResponse(NotAuthorised.self, .forbidden)
     func summariseTask(
         @Path id: String,
         @Query("include-done") includeDone: Bool?,
         @Header("X-Request-Id") requestID: String?
     ) async throws -> Components.Schemas.Task {
-        .init(
+        if id == "missing" { throw NoSuchTask() }
+        if id == "secret" { throw NotAuthorised() }
+        return .init(
             id: id,
             title: "summary of \(store.title(for: id)) done=\(includeDone ?? false) req=\(requestID ?? "-")"
         )
@@ -104,7 +133,13 @@ struct TaskListController {
         @Query("title") title: String,
         @JSONBody draft: Components.Schemas.Task
     ) async throws -> Components.Schemas.Task {
-        .init(id: draft.id, title: title)
+        // A handler can throw the same type the deserializer does. The mapping covers both: this one is
+        // caught inside and answered with the document's 422 case, while a body the *runtime* could not
+        // parse is caught at the terminal and answered with the same status.
+        if title == "corrupt" {
+            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "handmade"))
+        }
+        return .init(id: draft.id, title: title)
     }
 
     /// A **no-content** response. Nothing here is special-cased about 204: the handler returns nothing,
@@ -116,7 +151,10 @@ struct TaskListController {
     @Operation
     @ResponseStatus(.noContent)
     func deleteTask(@Path id: String) async throws {
-        print("deleted: \(id)")
+        // Not mapped here, so the *controller's* mapping answers it — 500, where `summariseTask`'s own
+        // mapping of the same error answers 404.
+        if id == "missing" { throw NoSuchTask() }
+        trace("deleted: \(id)")
     }
 
     /// **Two** documented successes, so the document cannot say which one this handler returns and the

@@ -24,6 +24,9 @@ extension DirectDispatchEmitter {
         }
         diagnoseDuplicates()
         diagnoseUndeclaredOperations()
+        diagnoseErrorMappings()
+        diagnoseControllerErrorMappings()
+        diagnoseCatchAllOrdering()
         diagnoseTypedBindings()
         diagnoseTypedResponses()
         let marked = byOperationID
@@ -296,10 +299,16 @@ extension DirectDispatchEmitter {
 
     /// Reported against the operation when one is in hand — a controller with six of them is not a
     /// useful place to point — and against the controller otherwise.
-    func fail(_ message: String, at operation: DiscoveredOperation? = nil) -> Never {
-        let controller = controllers[0]
-        let line = operation?.line ?? controller.line
-        FileHandle.standardError.write(Data("\(controller.file):\(line): error: \(message)\n".utf8))
+    func fail(
+        _ message: String,
+        at operation: DiscoveredOperation? = nil,
+        in controller: DiscoveredController? = nil
+    ) -> Never {
+        // The owning controller when the caller knows it: a group's controllers can live in different
+        // files, so reporting everything against the first one would point at the wrong source.
+        let source = controller ?? controllers[0]
+        let line = operation?.line ?? source.line
+        FileHandle.standardError.write(Data("\(source.file):\(line): error: \(message)\n".utf8))
         exit(1)
     }
 }

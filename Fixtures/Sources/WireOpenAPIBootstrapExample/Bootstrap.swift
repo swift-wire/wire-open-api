@@ -22,7 +22,7 @@ struct AppBootstrap {
     /// Returns the *concrete* server: the proposal's `Reader`/`ResponseSender` are `~Copyable`, which a
     /// bare `some HTTPServer` opaque return can't express.
     func createServer() throws -> NIOHTTPServer {
-        NIOHTTPServer(
+        return NIOHTTPServer(
             logger: Logger(label: "WireOpenAPIBootstrapExample"),
             configuration: try .init(
                 bindTarget: .hostAndPort(host: config.host, port: config.port),

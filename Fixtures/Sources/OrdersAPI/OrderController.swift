@@ -27,7 +27,7 @@ public struct OrderTrace: Sendable {
 
     @Inject public init(seed: HTTPRequest) {
         self.path = seed.path ?? "/"
-        print("scope: order trace for \(self.path)")
+        trace("scope: order trace for \(self.path)")
     }
 }
 
