@@ -50,6 +50,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Task'
+        '404': { description: No such task }
   /tasks/new:
     post:
       operationId: createTask

@@ -41,6 +41,9 @@ struct DiscoveredOperation {
     /// they used the wrong one. `@JSONResponse` carries a body, `@ResponseStatus` does not — the same
     /// split WireMVC draws.
     let statusAnnotation: String?
+    /// `@ErrorResponse(SomeError.self, .notFound)` on this method, in source order — route scope, which
+    /// folds *inside* the controller's.
+    let errorMappings: [ErrorMapping]
     /// The line the method is declared on, so a diagnostic points at the operation rather than at the
     /// controller that happens to contain it.
     let line: Int
@@ -70,6 +73,17 @@ struct BoundParameter {
     let type: String
 }
 
+/// One `@ErrorResponse(E.self, .status)` pair: an error type, and the status a throw of it becomes.
+///
+/// The closure form (`@ErrorResponse({ (e: E) in … })`) is WireMVC's, and returns a `WireMVCOutcome` — a
+/// status and bytes. An OpenAPI operation returns an `Output`, so the two do not line up, and only the
+/// pair form is read for now; the closure form is diagnosed rather than silently ignored.
+struct ErrorMapping {
+    let errorType: String
+    /// The status as written — `notFound` — resolved against the document where the response is built.
+    let status: String
+}
+
 struct DiscoveredController {
     let typeName: String
     let spec: String?
@@ -78,6 +92,9 @@ struct DiscoveredController {
     let middleware: [String]
     /// The controller's `@RawOperation` methods, in source order.
     let operations: [DiscoveredOperation]
+    /// Controller-scope `@ErrorResponse`, folded around every one of this controller's operations —
+    /// outside the route-scope ones, matching WireMVC's first-match-wins order.
+    let errorMappings: [ErrorMapping]
     /// The `@Scoped(seed:)` seed type, if the controller is request-scoped — in which case the aggregate
     /// bridges into its scope per request instead of holding it.
     let seed: String?
@@ -131,6 +148,37 @@ final class ControllerScanner: SyntaxVisitor {
             }
         }
         return nil
+    }
+
+    /// The `@ErrorResponse(E.self, .status)` pairs on a declaration, in source order.
+    private func errorMappings(of attributes: AttributeListSyntax) -> [ErrorMapping] {
+        var mappings: [ErrorMapping] = []
+        for element in attributes {
+            guard let attribute = element.as(AttributeSyntax.self),
+                attribute.attributeName.trimmedDescription == "ErrorResponse",
+                case .argumentList(let list) = attribute.arguments
+            else { continue }
+            let arguments = Array(list)
+            guard arguments.count == 2 else {
+                // One argument is the closure form.
+                diagnose(
+                    "@ErrorResponse's closure form is not supported for OpenAPI operations yet: it "
+                        + "returns a WireMVCOutcome (a status and bytes), while an operation returns the "
+                        + "document's Output. Use the @ErrorResponse(E.self, .status) form.",
+                    at: attribute.attributeName.firstToken(viewMode: .sourceAccurate)
+                        ?? attribute.atSign
+                )
+            }
+            let written = arguments[0].expression.trimmedDescription
+            let status = arguments[1].expression.trimmedDescription
+            mappings.append(
+                ErrorMapping(
+                    errorType: written.hasSuffix(".self") ? String(written.dropLast(5)) : written,
+                    status: status.hasPrefix(".") ? String(status.dropFirst()) : status
+                )
+            )
+        }
+        return mappings
     }
 
     private func middlewareArguments(of attributes: AttributeListSyntax) -> [String] {
@@ -193,6 +241,7 @@ final class ControllerScanner: SyntaxVisitor {
                     isTyped: false,
                     responseStatus: nil,
                     statusAnnotation: nil,
+                    errorMappings: errorMappings(of: function.attributes),
                     line: converter.location(for: function.name.position).line
                 )
             )
@@ -275,6 +324,7 @@ final class ControllerScanner: SyntaxVisitor {
             isTyped: true,
             responseStatus: named?.status,
             statusAnnotation: named?.annotation,
+            errorMappings: errorMappings(of: function.attributes),
             line: converter.location(for: function.name.position).line
         )
     }
@@ -309,6 +359,7 @@ final class ControllerScanner: SyntaxVisitor {
                     spec: spec,
                     middleware: middlewareArguments(of: attributes),
                     operations: operations(in: members),
+                    errorMappings: errorMappings(of: attributes),
                     seed: seedType(of: attributes),
                     file: file,
                     line: converter.location(for: token.position).line

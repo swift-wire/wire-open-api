@@ -24,6 +24,7 @@ extension DirectDispatchEmitter {
         }
         diagnoseDuplicates()
         diagnoseUndeclaredOperations()
+        diagnoseErrorMappings()
         diagnoseTypedBindings()
         diagnoseTypedResponses()
         let marked = byOperationID
@@ -37,6 +38,45 @@ extension DirectDispatchEmitter {
             @Operation or @RawOperation.
             """
         )
+    }
+
+    /// An `@ErrorResponse` mapping has to name a status that exists, and produce a response the shim can
+    /// build. A documented status carrying a *body* cannot be built from a bare status pair — there is
+    /// nothing to put in it — so that is rejected rather than answered with an empty body the document
+    /// promised would be full.
+    private func diagnoseErrorMappings() {
+        for controller in controllers {
+            for operation in controller.operations {
+                for mapping in operation.errorMappings + controller.errorMappings {
+                    guard (100...599).contains(statusCode(named: mapping.status)) else { continue }
+                    if (100...599).first(where: {
+                        GeneratorStatusNames.safeName(for: $0) == mapping.status
+                    }) == nil {
+                        fail(
+                            """
+                            @ErrorResponse(\(mapping.errorType).self, .\(mapping.status)) on \
+                            '\(operation.operationID)' names a status this adapter cannot resolve. Use one \
+                            of HTTPResponse.Status's named cases.
+                            """,
+                            at: operation
+                        )
+                    }
+                    let documented = operationRoutes[operation.operationID]?.responses.first {
+                        GeneratorStatusNames.safeName(for: $0.code) == mapping.status
+                    }
+                    guard let documented, !documented.contentTypes.isEmpty else { continue }
+                    fail(
+                        """
+                        @ErrorResponse(\(mapping.errorType).self, .\(mapping.status)) on \
+                        '\(operation.operationID)' maps to a \(documented.code) response that carries a \
+                        body, which a status-only mapping cannot construct. Return it from the handler, or \
+                        use @RawOperation.
+                        """,
+                        at: operation
+                    )
+                }
+            }
+        }
     }
 
     /// A marked method naming an operation the document does not declare.

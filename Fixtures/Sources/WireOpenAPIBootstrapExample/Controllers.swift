@@ -12,6 +12,11 @@ import WireOpenAPI
 // ordinary WireMVC controller. Both collate into `WireMVCKeys.routeContributors`, so the generated
 // `@main` serves them the same way, under the same `@NotFound` and the same global middleware.
 
+/// Errors a handler throws, mapped to responses by `@ErrorResponse`. Ordinary types: nothing about them
+/// knows they will be mapped, which is the point — the mapping lives at the route, not in the error.
+struct NoSuchTask: Error {}
+struct NotAuthorised: Error {}
+
 /// An app-scoped dependency both controllers share, so the fixture also shows one graph behind both.
 @Singleton
 struct TaskStore: Sendable {
@@ -72,6 +77,8 @@ struct TaskController {
 /// the same app-scoped `TaskStore`, so one graph sits behind the whole spec.
 @Singleton
 @OpenAPIController()
+@ErrorResponse(NoSuchTask.self, .internalServerError)
+@ErrorResponse(NotAuthorised.self, .forbidden)
 struct TaskListController {
     @Inject let store: TaskStore
 
@@ -83,13 +90,25 @@ struct TaskListController {
     /// The names show why the binding cannot be spelling-by-convention: `include-done` and `X-Request-Id`
     /// reach the generated `Input` as `includeDone` and `xRequestId` under the idiomatic strategy, and as
     /// `include_hyphen_done` and `X_hyphen_Request_hyphen_Id` under the defensive one.
+    /// `@ErrorResponse` on an OpenAPI operation, mapping a thrown error to a response the **document
+    /// declares** — so the generator serialises it exactly as it would a success. 404 carries no body
+    /// here, which is what lets a status-only mapping construct it; a documented body would be rejected.
+    ///
+    /// The controller below maps `NoSuchTask` too, to a different status — this one wins, because route
+    /// scope folds inside controller scope and the first match takes it. `NotAuthorised` has no route
+    /// mapping, so the controller's applies, and it names a status the document does *not* declare, which
+    /// becomes `.undocumented(statusCode:)` — the generated escape, still a real response rather than a
+    /// dropped connection.
     @Operation
+    @ErrorResponse(NoSuchTask.self, .notFound)
     func summariseTask(
         @Path id: String,
         @Query("include-done") includeDone: Bool?,
         @Header("X-Request-Id") requestID: String?
     ) async throws -> Components.Schemas.Task {
-        .init(
+        if id == "missing" { throw NoSuchTask() }
+        if id == "secret" { throw NotAuthorised() }
+        return .init(
             id: id,
             title: "summary of \(store.title(for: id)) done=\(includeDone ?? false) req=\(requestID ?? "-")"
         )

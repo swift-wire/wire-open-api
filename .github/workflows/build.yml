@@ -104,6 +104,21 @@ jobs:
           typed=$(curl -s -H 'X-Request-Id: abc123' \
             "http://127.0.0.1:8080/api/v1/tasks/9/summary?include-done=true" -w ' [%{http_code}]')
           typedBare=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/api/v1/tasks/9/summary)
+          # @ErrorResponse on an OpenAPI operation. `missing` is mapped at both scopes and route scope
+          # must win; `secret` is mapped only at controller scope, to a status the document does not
+          # declare, which becomes `.undocumented(statusCode:)`.
+          mappedDocumented=$(curl -s -o /dev/null -w '%{http_code}' \
+            http://127.0.0.1:8080/api/v1/tasks/missing/summary)
+          mappedUndocumented=$(curl -s -o /dev/null -w '%{http_code}' \
+            http://127.0.0.1:8080/api/v1/tasks/secret/summary)
+          # A thrown error becomes a response the *document* describes, serialised by the generator like
+          # any success — and route-scope mappings fold inside controller-scope ones, so 404 here rather
+          # than the controller's 500 for the same error type.
+          [ "$mappedDocumented" = 404 ] \
+            || { echo "@ErrorResponse route scope did not win ($mappedDocumented)"; exit 1; }
+          [ "$mappedUndocumented" = 403 ] \
+            || { echo "@ErrorResponse to an undocumented status failed ($mappedUndocumented)"; exit 1; }
+
           # Responses the shim constructs: a non-200 success inferred from the document, a no-content
           # response chosen by @ResponseStatus, and one chosen by @JSONResponse — the two annotations
           # splitting on whether the handler returns a body.
