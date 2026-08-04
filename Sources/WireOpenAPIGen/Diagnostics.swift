@@ -66,7 +66,8 @@ extension DirectDispatchEmitter {
         for controller in controllers {
             for operation in controller.operations where operation.isTyped {
                 guard let route = operationRoutes[operation.operationID] else { continue }
-                for parameter in operation.parameters {
+                diagnoseRequestBody(operation, route)
+                for parameter in operation.parameters where !parameter.isBody {
                     guard let declared = route.parameters.first(where: { $0.name == parameter.documentedName })
                     else {
                         let known = route.parameters.map { "'\($0.name)' (\($0.location.rawValue))" }
@@ -139,6 +140,73 @@ extension DirectDispatchEmitter {
                 }
                 diagnoseResponseShape(operation)
             }
+        }
+    }
+
+    /// A `@JSONBody` parameter and the document's `requestBody` have to agree — on existing at all, on
+    /// content type, and on whether the body may be absent. The last one matters most: the generated
+    /// `Input.body` is optional exactly when the document says the body is not required, so a handler
+    /// disagreeing produces a type error inside generated code rather than at the declaration.
+    private func diagnoseRequestBody(_ operation: DiscoveredOperation, _ route: OperationRoute) {
+        let bound = operation.parameters.filter(\.isBody)
+        guard bound.count <= 1 else {
+            fail(
+                "'\(operation.operationID)' binds \(bound.count) request bodies. An operation has one.",
+                at: operation
+            )
+        }
+        guard let parameter = bound.first else {
+            guard route.requestBody != nil else { return }
+            fail(
+                """
+                '\(operation.operationID)' documents a request body, but its handler binds none. Take it \
+                with @JSONBody, or use @RawOperation.
+                """,
+                at: operation
+            )
+        }
+        guard let documented = route.requestBody else {
+            fail(
+                """
+                '\(operation.operationID)' binds a @JSONBody, but the document declares no request body \
+                for it.
+                """,
+                at: operation
+            )
+        }
+        diagnoseRequestBodyShape(operation, documented, parameter)
+    }
+
+    /// Content type and optionality, once both sides are known to exist.
+    private func diagnoseRequestBodyShape(
+        _ operation: DiscoveredOperation,
+        _ documented: SpecRequestBody,
+        _ parameter: BoundParameter
+    ) {
+        guard documented.contentTypes == ["application/json"] else {
+            let listed = documented.contentTypes.joined(separator: ", ")
+            fail(
+                """
+                '\(operation.operationID)' documents a request body of \(listed.isEmpty ? "no content type" : listed), \
+                which @JSONBody cannot decode — it reads JSON only. Use @RawOperation for this operation.
+                """,
+                at: operation
+            )
+        }
+        let isOptional = parameter.type.hasSuffix("?")
+        guard documented.isRequired == !isOptional else {
+            fail(
+                documented.isRequired
+                    ? """
+                    '\(operation.operationID)' documents a required request body, but its handler takes \
+                    \(parameter.type). Drop the optionality.
+                    """
+                    : """
+                    '\(operation.operationID)' documents an optional request body, but its handler takes \
+                    \(parameter.type). Make it optional — the document does not promise one will arrive.
+                    """,
+                at: operation
+            )
         }
     }
 

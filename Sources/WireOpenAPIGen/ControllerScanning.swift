@@ -53,8 +53,11 @@ struct DiscoveredOperation {
 /// request, while here the generator has already decoded it into `input.path.x` and the shim only has to
 /// name that member.
 struct BoundParameter {
-    /// `Path`, `Query` or `Header`.
+    /// `Path`, `Query`, `Header` or `JSONBody`.
     let binding: String
+
+    /// Whether this parameter binds the request body rather than one of the document's `parameters:`.
+    var isBody: Bool { binding == "JSONBody" }
     /// The documented parameter name: `@Path("user-id")` when given, the parameter's own name otherwise —
     /// the same rule WireMVC's route codegen applies.
     let documentedName: String
@@ -62,6 +65,9 @@ struct BoundParameter {
     let label: String?
     /// The parameter's own name, used as the documented name when the attribute gives none.
     let name: String
+    /// The type exactly as written, which the body binding declares its local with — so the author's
+    /// spelling reaches the generated code unaltered, as `@RawOperation`'s always has.
+    let type: String
 }
 
 struct DiscoveredController {
@@ -229,7 +235,7 @@ final class ControllerScanner: SyntaxVisitor {
             for element in parameter.attributes {
                 guard let attribute = element.as(AttributeSyntax.self) else { continue }
                 let name = attribute.attributeName.trimmedDescription
-                guard ["Path", "Query", "Header"].contains(name) else { continue }
+                guard ["Path", "Query", "Header", "JSONBody"].contains(name) else { continue }
                 binding = name
                 if case .argumentList(let list) = attribute.arguments, let first = list.first {
                     documented = first.expression.as(StringLiteralExprSyntax.self)?.representedLiteralValue
@@ -240,7 +246,8 @@ final class ControllerScanner: SyntaxVisitor {
             guard let binding else {
                 diagnose(
                     "parameter '\(ownName)' of @Operation '\(operationID)' needs a binding annotation — "
-                        + "one of @Path, @Query, @Header. The document says where each parameter lives; "
+                        + "one of @Path, @Query, @Header, @JSONBody. The document says where each "
+                        + "parameter lives; "
                         + "the annotation says which one this is.",
                     at: parameter.firstName
                 )
@@ -251,7 +258,8 @@ final class ControllerScanner: SyntaxVisitor {
                     binding: binding,
                     documentedName: documented ?? ownName,
                     label: label,
-                    name: ownName
+                    name: ownName,
+                    type: parameter.type.trimmedDescription
                 )
             )
         }

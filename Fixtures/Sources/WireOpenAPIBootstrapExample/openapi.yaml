@@ -50,6 +50,11 @@ paths:
   /tasks/new:
     post:
       operationId: createTask
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Task' }
       parameters:
         - { name: title, in: query, required: true, schema: { type: string } }
       responses:
@@ -69,6 +74,10 @@ paths:
   /tasks/{id}/replace:
     post:
       operationId: replaceTask
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Task' }
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
         - { name: title, in: query, required: true, schema: { type: string } }

@@ -91,7 +91,23 @@ public enum WireOpenAPIRoutes {
         let bytes = try await WireMVCRequest.collectBody(reader, maximumSize: terminal.maximumBodySize)
         let body: HTTPBody? = bytes.isEmpty ? nil : HTTPBody(bytes)
 
-        let (response, responseBody) = try await terminal.handler(request, body, metadata)
+        // The generator's machinery rejects a request it cannot decode — a missing required body,
+        // malformed JSON, a path parameter of the wrong type — by throwing `ServerError`, not by
+        // returning a response. In a stock deployment its *transport* maps that to a 4xx; WireMVC is the
+        // transport here, and knows nothing of it, so the error would escape to the router, which has no
+        // response to write and drops the connection. (Observed: `curl` reporting no reply at all.)
+        //
+        // `ServerError` conforms to `HTTPResponseConvertible`, so the mapping is the runtime's own and
+        // not a policy invented here. Anything else propagates untouched, which keeps WireMVC's error
+        // tiers in charge of errors the *handler* threw.
+        let response: HTTPResponse
+        let responseBody: HTTPBody?
+        do {
+            (response, responseBody) = try await terminal.handler(request, body, metadata)
+        } catch let error as any HTTPResponseConvertible {
+            response = HTTPResponse(status: error.httpStatus, headerFields: error.httpHeaderFields)
+            responseBody = error.httpBody
+        }
 
         // Send the generator's `HTTPResponse` verbatim rather than rebuilding it from a status: it
         // carries the headers the operation's serializer set (`Content-Type`, and anything the spec

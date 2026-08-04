@@ -97,9 +97,14 @@ struct TaskListController {
 
     /// A non-200 success, inferred. The document declares exactly one success for this operation — 201 —
     /// so which response the handler builds needs no saying, and the shim emits `.created(…)`.
+    /// A **required** request body, decoded by the generator and handed over as the schema type. The
+    /// handler never names `Operations.CreateTask.Input.Body`.
     @Operation
-    func createTask(@Query("title") title: String) async throws -> Components.Schemas.Task {
-        .init(id: "new", title: title)
+    func createTask(
+        @Query("title") title: String,
+        @JSONBody draft: Components.Schemas.Task
+    ) async throws -> Components.Schemas.Task {
+        .init(id: draft.id, title: title)
     }
 
     /// A **no-content** response. Nothing here is special-cased about 204: the handler returns nothing,
@@ -120,11 +125,12 @@ struct TaskListController {
     @JSONResponse(status: .created)
     func replaceTask(
         @Path id: String,
-        @Query("title") title: String
-    ) async throws
-        -> Components.Schemas.Task
-    {
-        .init(id: id, title: title)
+        @Query("title") title: String,
+        @JSONBody draft: Components.Schemas.Task?
+    ) async throws -> Components.Schemas.Task {
+        // The document does not mark this body required, so the generated `Input.body` is optional and
+        // the handler has to be too. A disagreement either way is diagnosed.
+        .init(id: id, title: "\(title) from \(draft?.id ?? "nothing")")
     }
 
     /// Route-scope middleware: `Audit` folds around this operation only. `@RawOperation` is what ties the
