@@ -107,10 +107,23 @@ jobs:
           # Responses the shim constructs: a non-200 success inferred from the document, a no-content
           # response chosen by @ResponseStatus, and one chosen by @JSONResponse — the two annotations
           # splitting on whether the handler returns a body.
-          created=$(curl -s -X POST "http://127.0.0.1:8080/api/v1/tasks/new?title=hello" -w ' [%{http_code}]')
+          # A required request body, decoded by the generator and handed to the handler as the schema
+          # type: the response echoes the body's `id`, which only arrives if it was decoded.
+          created=$(curl -s -X POST -H 'Content-Type: application/json' -d '{"id":"from-body","title":"x"}' \
+            "http://127.0.0.1:8080/api/v1/tasks/new?title=hello" -w ' [%{http_code}]')
+          # The generator rejects what it cannot decode by *throwing*; without the terminal mapping that
+          # to a response the connection is dropped with no reply at all, which is what these catch.
+          missingBody=$(curl -s -o /dev/null -X POST \
+            "http://127.0.0.1:8080/api/v1/tasks/new?title=hello" -w '%{http_code}')
+          wrongType=$(curl -s -o /dev/null -X POST -H 'Content-Type: text/plain' -d hi \
+            "http://127.0.0.1:8080/api/v1/tasks/new?title=hello" -w '%{http_code}')
           deleted=$(curl -s -o /dev/null -X POST http://127.0.0.1:8080/api/v1/tasks/7/delete \
             -w '%{http_code}:%{size_download}')
-          replaced=$(curl -s -X POST "http://127.0.0.1:8080/api/v1/tasks/9/replace?title=renamed" \
+          # An *optional* body: the generated `Input.body` is optional exactly when the document does not
+          # require one, so both presence and absence have to work.
+          replaced=$(curl -s -X POST -H 'Content-Type: application/json' -d '{"id":"B9","title":"x"}' \
+            "http://127.0.0.1:8080/api/v1/tasks/9/replace?title=renamed" -w ' [%{http_code}]')
+          replacedBare=$(curl -s -X POST "http://127.0.0.1:8080/api/v1/tasks/9/replace?title=renamed" \
             -w ' [%{http_code}]')
           kill "$pid" 2>/dev/null || true
           [ "$ok" = 1 ] || { echo "the fixture did not bind"; cat serverlog.txt; exit 1; }
@@ -216,16 +229,24 @@ jobs:
           # documents only 201, so `.created` is inferred; `replaceTask` documents 200 and 201, so the
           # handler names one. `deleteTask` documents 202 and 204, both content-free, so its Void handler
           # names one with @ResponseStatus — and must still run, which the log line is the evidence for.
-          case "$created" in
-            *'"title" : "hello"'*"[201]") ;;
-            *) echo "the inferred 201 response was not constructed"; exit 1;;
+          case "$(plain "$created")" in
+            *'"id" : "from-body"'*'"title" : "hello"'*"[201]") ;;
+            *) echo "the required request body was not decoded into the handler"; exit 1;;
           esac
+          [ "$missingBody" = 400 ] \
+            || { echo "a missing required body did not answer 400 ($missingBody)"; exit 1; }
+          [ "$wrongType" = 415 ] \
+            || { echo "a wrong content type did not answer 415 ($wrongType)"; exit 1; }
           [ "$deleted" = "204:0" ] || { echo "the no-content response was not constructed ($deleted)"; exit 1; }
           grep -q '^deleted: 7' serverlog.txt \
             || { echo "a no-content handler was not called"; exit 1; }
-          case "$replaced" in
-            *'"title" : "renamed"'*"[201]") ;;
-            *) echo "@JSONResponse(status:) did not select the response"; exit 1;;
+          case "$(plain "$replaced")" in
+            *'"title" : "renamed from B9"'*"[201]") ;;
+            *) echo "@JSONResponse(status:) or the optional body failed"; exit 1;;
+          esac
+          case "$(plain "$replacedBare")" in
+            *'"title" : "renamed from nothing"'*"[201]") ;;
+            *) echo "an absent optional body was not handled"; exit 1;;
           esac
 
           # It is app-scoped, so it enters no request scope even though its sibling in OrdersAPI does.

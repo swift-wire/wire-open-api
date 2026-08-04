@@ -99,6 +99,15 @@ struct OperationRoute {
     /// The operation's declared responses. The typed shim constructs one of these, so which status and
     /// which content type is a question the document answers.
     let responses: [SpecResponse]
+    /// The declared `requestBody`, if any. Nil means the operation takes none — and a handler that binds
+    /// one anyway is reading a member the generated `Input` does not have.
+    let requestBody: SpecRequestBody?
+}
+
+/// The `requestBody:` entry: whether it must be present, and what it can be.
+struct SpecRequestBody {
+    let isRequired: Bool
+    let contentTypes: [String]
 }
 
 /// One `responses:` entry.
@@ -168,11 +177,21 @@ func resolveOperationRoutes(specPath: String?) -> [String: OperationRoute] {
                     return SpecResponse(code: code, contentTypes: content.keys.sorted())
                 }
                 .sorted { $0.code < $1.code }
+            let declaredBody = operation["requestBody"] as? [String: Any]
+            let requestBody = declaredBody.map { entry in
+                SpecRequestBody(
+                    // OpenAPI's default is `required: false`, which is also the generator's: the `Input`
+                    // member is optional unless the document says otherwise.
+                    isRequired: entry["required"] as? Bool ?? false,
+                    contentTypes: (entry["content"] as? [String: Any] ?? [:]).keys.sorted()
+                )
+            }
             routes[operationID] = OperationRoute(
                 method: method.uppercased(),
                 path: specPath,
                 parameters: parameters,
-                responses: responses
+                responses: responses,
+                requestBody: requestBody
             )
         }
     }

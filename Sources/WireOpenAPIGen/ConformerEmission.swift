@@ -108,20 +108,25 @@ extension DirectDispatchEmitter {
         }
         let arguments = operation.parameters.map { parameter -> String in
             let label = parameter.label.map { "\($0): " } ?? ""
+            // The body is unwrapped into a local first; everything else is read inline.
+            guard !parameter.isBody else { return "\(label)wireOpenAPIBody" }
             return "\(label)input.\(inputMember(for: parameter, in: operation))"
         }
+        let prelude =
+            operation.parameters.first(where: \.isBody)
+            .map { bodyBinding($0, in: operation, indent: indent) + "\n" } ?? ""
         let call = "try await \(subject).\(operation.methodName)(\(arguments.joined(separator: ", ")))"
         let response = selectedResponse(for: operation)
         let caseName = GeneratorStatusNames.safeName(for: response.code)
         guard operation.returnType != nil else {
             // A documented no-content response: nothing to carry, so the call stands alone.
             return """
-                \(indent)\(call)
+                \(prelude)\(indent)\(call)
                 \(indent)return .\(caseName)(.init())
                 """
         }
         return """
-            \(indent)let wireOpenAPIResult = \(call)
+            \(prelude)\(indent)let wireOpenAPIResult = \(call)
             \(indent)return .\(caseName)(.init(body: .json(wireOpenAPIResult)))
             """
     }
@@ -142,6 +147,34 @@ extension DirectDispatchEmitter {
         }
         return responses.first { (200..<300).contains($0.code) }
             ?? SpecResponse(code: 200, contentTypes: ["application/json"])
+    }
+
+    /// Unwrapping the request body out of the generated `Input.Body` enum.
+    ///
+    /// The enum has one case per documented content type, so a JSON-only body gives a single-case switch
+    /// — exhaustive without a `default`, which means adding a content type to the document turns into a
+    /// compile error here rather than a silently unhandled case.
+    private func bodyBinding(
+        _ parameter: BoundParameter,
+        in operation: DiscoveredOperation,
+        indent: String
+    ) -> String {
+        let type = parameter.type
+        guard type.hasSuffix("?") else {
+            return """
+                \(indent)let wireOpenAPIBody: \(type)
+                \(indent)switch input.body {
+                \(indent)case .json(let wireOpenAPIValue): wireOpenAPIBody = wireOpenAPIValue
+                \(indent)}
+                """
+        }
+        return """
+            \(indent)let wireOpenAPIBody: \(type)
+            \(indent)switch input.body {
+            \(indent)case .some(.json(let wireOpenAPIValue)): wireOpenAPIBody = wireOpenAPIValue
+            \(indent)case .none: wireOpenAPIBody = nil
+            \(indent)}
+            """
     }
 
     /// `path.id` / `query.includeDone` / `headers.xRequestId` — the location from the *document*, the
