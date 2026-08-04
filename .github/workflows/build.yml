@@ -164,10 +164,10 @@ jobs:
           echo "GET /api/v2/tasks    → $crossed2 (expect 404: likewise, in the other direction)"
           echo "GET .../summary      → $typed"
           case "$(plain "$openapi")" in
-            *'"title" : "task-42 via /api/v1/tasks/42"'*"[200]") ;;
+            *'"title":"task-42 via /api/v1/tasks/42"'*"[200]") ;;
             *) echo "the OpenAPI operation did not serve"; exit 1;;
           esac
-          case "$mvc" in *'{"count":3}'*"[200]") ;; *) echo "the WireMVC route did not serve"; exit 1;; esac
+          case "$mvc" in *'"count":3'*"[200]") ;; *) echo "the WireMVC route did not serve"; exit 1;; esac
           case "$notfound" in *"no route here"*"[404]") ;; *) echo "@NotFound did not fire"; exit 1;; esac
           [ "$unprefixed" = 404 ] || { echo "operation registered without its server prefix"; exit 1; }
           # Served by the *other* controller of the same spec, from the shared app-scoped TaskStore.
@@ -177,7 +177,7 @@ jobs:
           # reaches the operation with no ambient state: each response must carry its own request's path,
           # and the scope must be entered once per request rather than shared.
           case "$(plain "$other")" in
-            *'"title" : "task-99 via /api/v1/tasks/99"'*"[200]") ;;
+            *'"title":"task-99 via /api/v1/tasks/99"'*"[200]") ;;
             *) echo "the request-scoped subject did not follow the request"; exit 1;;
           esac
           echo "=== scope log ==="; grep -E '^scope:' serverlog.txt || true
@@ -185,6 +185,25 @@ jobs:
             || { echo "the request scope was not entered for the first request"; exit 1; }
           grep -q '^scope: constructed for /api/v1/tasks/99' serverlog.txt \
             || { echo "the request scope was not re-entered for the second request"; exit 1; }
+
+          # @Coding — the M6d.6 gate. Two separate properties, and the second is the one that bites.
+          #
+          # 1. Both kinds of route write the same instant the same way. Before this, a WireMVC @Get
+          #    encoded with Foundation's default — a number of seconds since 2001 — while an operation
+          #    next to it used the OpenAPI runtime's ISO8601. One app, two spellings of a date.
+          # 2. The app's *declared* settings reached the generated code. Agreement alone does not show
+          #    that: ISO8601 is now the default on both sides, so it would hold even if the value never
+          #    travelled. Sorted keys is nobody's default — AppCoding asks for it, and only an operation
+          #    whose Configuration was built from that value can produce it.
+          echo "=== coding ==="
+          echo "openapi → $(plain "$openapi")"
+          echo "wiremvc → $mvc"
+          case "$openapi" in *'"at":"2023-11-14T22:13:20Z"'*) ;;
+            *) echo "the OpenAPI operation did not write the fixture date as ISO8601"; exit 1;; esac
+          case "$mvc" in *'"at":"2023-11-14T22:13:20Z"'*) ;;
+            *) echo "the WireMVC route did not write the same instant the same way"; exit 1;; esac
+          case "$(plain "$openapi")" in '{"at":'*'"id":"42"'*'"title":'*) ;;
+            *) echo "the app-wide sortsKeys did not reach the OpenAPI operation"; exit 1;; esac
 
           # @Middleware — the M6d.2 gate. One RequireAPIKey component, declared once, folding around an
           # OpenAPI operation and an annotation-driven @Get alike; one Audit at route scope on a single
@@ -213,11 +232,11 @@ jobs:
           # request scope and its own server prefix; the app also generates the Tasks document itself.
           # Both spell APIProtocol/Operations/Servers the same, so a mix-up would land here.
           case "$(plain "$order")" in
-            *'"item" : "item-7 via /api/v2/orders/7"'*"[200]") ;;
+            *'"item":"item-7 via /api/v2/orders/7"'*"[200]") ;;
             *) echo "the second spec's operation did not serve"; exit 1;;
           esac
           case "$(plain "$order2")" in
-            *'"item" : "item-9 via /api/v2/orders/9"'*"[200]") ;;
+            *'"item":"item-9 via /api/v2/orders/9"'*"[200]") ;;
             *) echo "the second spec's request-scoped subject did not follow the request"; exit 1;;
           esac
           [ "$crossed" = 404 ] || { echo "one document's prefix served the other's operation"; exit 1; }
@@ -240,12 +259,12 @@ jobs:
           # binding that read the wrong location, or spelled a member by convention, would serve a
           # default here rather than fail.
           case "$typed" in
-            *'"title" : "summary of task-9 done=true req=abc123"'*"[200]") ;;
+            *'"title":"summary of task-9 done=true req=abc123"'*"[200]") ;;
             *) echo "the typed operation did not bind its parameters"; exit 1;;
           esac
           # Absent optionals stay absent rather than becoming empty strings.
           case "$typedBare" in
-            *'"title" : "summary of task-9 done=false req=-"'*"[200]") ;;
+            *'"title":"summary of task-9 done=false req=-"'*"[200]") ;;
             *) echo "the typed operation mishandled absent optional parameters"; exit 1;;
           esac
 
@@ -254,7 +273,7 @@ jobs:
           # handler names one. `deleteTask` documents 202 and 204, both content-free, so its Void handler
           # names one with @ResponseStatus — and must still run, which the log line is the evidence for.
           case "$(plain "$created")" in
-            *'"id" : "from-body"'*'"title" : "hello"'*"[201]") ;;
+            *'"id":"from-body"'*'"title":"hello"'*"[201]") ;;
             *) echo "the required request body was not decoded into the handler"; exit 1;;
           esac
           [ "$missingBody" = 400 ] \
@@ -265,11 +284,11 @@ jobs:
           grep -q '^deleted: 7' serverlog.txt \
             || { echo "a no-content handler was not called"; exit 1; }
           case "$(plain "$replaced")" in
-            *'"title" : "renamed from B9"'*"[201]") ;;
+            *'"title":"renamed from B9"'*"[201]") ;;
             *) echo "@JSONResponse(status:) or the optional body failed"; exit 1;;
           esac
           case "$(plain "$replacedBare")" in
-            *'"title" : "renamed from nothing"'*"[201]") ;;
+            *'"title":"renamed from nothing"'*"[201]") ;;
             *) echo "an absent optional body was not handled"; exit 1;;
           esac
 
@@ -291,7 +310,7 @@ jobs:
           # The three-argument form: 404 declares a Problem, so the mapping supplies one and the generator
           # serialises it as that response's body.
           case "$(plain "$mappedDocumented")" in
-            *'"message" : "no such task"'*) ;;
+            *'"message":"no such task"'*) ;;
             *) echo "the body-returning @ErrorResponse form did not produce its body"; exit 1;;
           esac
 

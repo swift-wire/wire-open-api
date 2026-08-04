@@ -233,7 +233,10 @@ struct DirectDispatchEmitter {
         let templateHandler = conformerLiteral(binding: nil, indent: "            ")
         return """
             extension \(proxy): RouteContributor {
-                func registerWireRoutes<Builder: HTTPServerRouteBuilder>(on builder: inout Builder) throws
+                func registerWireRoutes<Builder: HTTPServerRouteBuilder>(
+                    on builder: inout Builder,
+                    coding wireMVCAppCoding: WireMVCCoding
+                ) throws
                 where
                     Builder.RequestContext: ~Copyable & SendableMetatype,
                     Builder.Reader: ~Copyable,
@@ -241,7 +244,8 @@ struct DirectDispatchEmitter {
                     Builder.ResponseSender.Writer: ~Copyable
                 {
                     let wireOpenAPIServerTemplate = UniversalServer(
-                        \(serverURLArgument)handler: \(templateHandler)
+                        \(serverURLArgument)handler: \(templateHandler),
+                        configuration: Configuration(wireMVCCoding: wireMVCAppCoding)
                     )
             \(registrations.joined(separator: "\n"))
                 }
