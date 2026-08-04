@@ -67,7 +67,8 @@ jobs:
         # controller is declared says nothing about which document it implements.
         run: |
           BIN="$(swift build --show-bin-path)/WireOpenAPIBootstrapExample"
-          stdbuf -oL "$BIN" > serverlog.txt 2>&1 &
+          # The fixture line-buffers its own stdout, so the log survives being killed mid-probe.
+          "$BIN" > serverlog.txt 2>&1 &
           pid=$!
           ok=0
           for _ in $(seq 1 30); do
@@ -126,27 +127,6 @@ jobs:
           mappedDecodeInside=$(curl -s -o /dev/null -X POST -H 'Content-Type: application/json' \
             -d '{"id":"z","title":"t"}' -w '%{http_code}' \
             "http://127.0.0.1:8080/api/v1/tasks/new?title=corrupt")
-          # A thrown error becomes a response the *document* describes, serialised by the generator like
-          # any success — and route-scope mappings fold inside controller-scope ones, so 404 here rather
-          # than the controller's 500 for the same error type.
-          case "$mappedDocumented" in
-            *"[404]") ;;
-            *) echo "@ErrorResponse route scope did not win ($mappedDocumented)"; exit 1;;
-          esac
-          [ "$mappedUndocumented" = 403 ] \
-            || { echo "@ErrorResponse route-scope mapping failed ($mappedUndocumented)"; exit 1; }
-          [ "$mappedController" = 500 ] \
-            || { echo "@ErrorResponse controller-scope mapping failed ($mappedController)"; exit 1; }
-          [ "$mappedDecode" = 422 ] \
-            || { echo "@ErrorResponse(DecodingError.self) at the terminal failed ($mappedDecode)"; exit 1; }
-          [ "$mappedDecodeInside" = 422 ] \
-            || { echo "@ErrorResponse(DecodingError.self) in the forwarder failed ($mappedDecodeInside)"; exit 1; }
-          # The three-argument form: 404 declares a Problem, so the mapping supplies one and the generator
-          # serialises it as that response's body.
-          case "$(plain "$mappedDocumented")" in
-            *'"message" : "no such task"'*) ;;
-            *) echo "the body-returning @ErrorResponse form did not produce its body"; exit 1;;
-          esac
 
           # Responses the shim constructs: a non-200 success inferred from the document, a no-content
           # response chosen by @ResponseStatus, and one chosen by @JSONResponse — the two annotations
@@ -171,6 +151,9 @@ jobs:
             -w ' [%{http_code}]')
           kill "$pid" 2>/dev/null || true
           [ "$ok" = 1 ] || { echo "the fixture did not bind"; cat serverlog.txt; exit 1; }
+          # Foundation escapes `/` as `\/` in JSON output; strip the backslashes rather than write
+          # patterns that `case` would itself treat as escapes.
+          plain() { printf '%s' "$1" | tr -d '\\'; }
           echo "GET /api/v1/tasks/42 → $openapi"
           echo "GET /status/tasks    → $mvc"
           echo "GET /nope            → $notfound"
@@ -180,9 +163,6 @@ jobs:
           echo "GET /api/v2/orders   → $summary"
           echo "GET /api/v2/tasks    → $crossed2 (expect 404: likewise, in the other direction)"
           echo "GET .../summary      → $typed"
-          # Foundation escapes `/` as `\/` in JSON output; strip the backslashes rather than write
-          # patterns that `case` would itself treat as escapes.
-          plain() { printf '%s' "$1" | tr -d '\\'; }
           case "$(plain "$openapi")" in
             *'"title" : "task-42 via /api/v1/tasks/42"'*"[200]") ;;
             *) echo "the OpenAPI operation did not serve"; exit 1;;
@@ -291,6 +271,28 @@ jobs:
           case "$(plain "$replacedBare")" in
             *'"title" : "renamed from nothing"'*"[201]") ;;
             *) echo "an absent optional body was not handled"; exit 1;;
+          esac
+
+          # A thrown error becomes a response the *document* describes, serialised by the generator like
+          # any success — and route-scope mappings fold inside controller-scope ones, so 404 here rather
+          # than the controller's 500 for the same error type.
+          case "$mappedDocumented" in
+            *"[404]") ;;
+            *) echo "@ErrorResponse route scope did not win ($mappedDocumented)"; exit 1;;
+          esac
+          [ "$mappedUndocumented" = 403 ] \
+            || { echo "@ErrorResponse route-scope mapping failed ($mappedUndocumented)"; exit 1; }
+          [ "$mappedController" = 500 ] \
+            || { echo "@ErrorResponse controller-scope mapping failed ($mappedController)"; exit 1; }
+          [ "$mappedDecode" = 422 ] \
+            || { echo "@ErrorResponse(DecodingError.self) at the terminal failed ($mappedDecode)"; exit 1; }
+          [ "$mappedDecodeInside" = 422 ] \
+            || { echo "@ErrorResponse(DecodingError.self) in the forwarder failed ($mappedDecodeInside)"; exit 1; }
+          # The three-argument form: 404 declares a Problem, so the mapping supplies one and the generator
+          # serialises it as that response's body.
+          case "$(plain "$mappedDocumented")" in
+            *'"message" : "no such task"'*) ;;
+            *) echo "the body-returning @ErrorResponse form did not produce its body"; exit 1;;
           esac
 
           # It is app-scoped, so it enters no request scope even though its sibling in OrdersAPI does.
