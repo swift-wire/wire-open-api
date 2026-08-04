@@ -37,7 +37,10 @@ paths:
     get:
       operationId: summariseTask
       parameters:
-        - { name: id, in: path, required: true, schema: { type: string } }
+        # Declared by reference, not inline. Ordinary OpenAPI, and the shape that exposed reading the
+        # document as a dictionary: a `$ref` carries no `name`, so it was dropped and a handler binding
+        # `id` was rejected for binding something "the document does not declare". OpenAPIKit resolves it.
+        - { $ref: '#/components/parameters/TaskId' }
         - { name: include-done, in: query, required: false, schema: { type: boolean } }
         - { name: X-Request-Id, in: header, required: false, schema: { type: string } }
       responses:
@@ -93,6 +96,8 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Task' }
 components:
+  parameters:
+    TaskId: { name: id, in: path, required: true, schema: { type: string } }
   schemas:
     Task:
       type: object

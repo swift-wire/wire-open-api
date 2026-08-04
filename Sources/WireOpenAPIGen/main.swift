@@ -1,4 +1,5 @@
 import Foundation
+import OpenAPIKit
 import SwiftParser
 import SwiftSyntax
 import Yams
@@ -127,6 +128,7 @@ for (spec, controllers) in byGroup.sorted(by: { $0.key < $1.key }) where !contro
     // operations the author never wrote — or, with the right shape, mount the wrong routes.
     let specModule: String?
     let specPath: String?
+    /// Loaded once per group: everything the codegen asks of the document goes through it.
     if spec.isEmpty {
         specModule = nil
         specPath = localSpecPath
@@ -153,13 +155,14 @@ for (spec, controllers) in byGroup.sorted(by: { $0.key < $1.key }) where !contro
         )
         exit(1)
     }
+    let document = specPath.flatMap(loadDocument(at:))
     DirectDispatchEmitter(
         spec: spec,
         proxy: proxyTypeName(for: spec.isEmpty ? nil : spec),
         controllers: controllers,
         specModule: specModule,
-        operationRoutes: resolveOperationRoutes(specPath: specPath),
-        serverPrefix: resolveServerPrefix(specPath: specPath),
+        operationRoutes: document?.operationRoutes ?? [:],
+        serverPrefix: resolveServerPrefix(document: document, path: specPath ?? ""),
         namingStrategy: resolveNamingStrategy(configPath: specConfigPaths[spec]),
         foldEntries: foldEntries
     ).emit(into: &lines)
