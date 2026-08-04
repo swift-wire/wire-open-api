@@ -29,10 +29,21 @@ struct DiscoveredOperation {
     let outputType: String?
     /// `@Operation`: the parameters to bind and the response body type. Empty and nil for a raw one.
     let parameters: [BoundParameter]
+    /// The response body's type, or nil when the handler returns nothing — which is how a documented
+    /// no-content response is written.
     let returnType: String?
-
     /// Whether this operation is bound by the typed shim rather than handed the generated `Input`.
-    var isTyped: Bool { returnType != nil }
+    let isTyped: Bool
+    /// The status named by `@JSONResponse(status:)` or `@ResponseStatus(_:)`, as written — `created`.
+    /// Nil when the operation documents exactly one success and needs no saying.
+    let responseStatus: String?
+    /// Which annotation named it, so a handler that returns a body and one that does not can be told
+    /// they used the wrong one. `@JSONResponse` carries a body, `@ResponseStatus` does not — the same
+    /// split WireMVC draws.
+    let statusAnnotation: String?
+    /// The line the method is declared on, so a diagnostic points at the operation rather than at the
+    /// controller that happens to contain it.
+    let line: Int
 }
 
 /// One handler parameter and the `Input` location it reads.
@@ -172,23 +183,45 @@ final class ControllerScanner: SyntaxVisitor {
                     inputType: parameter.type.trimmedDescription,
                     outputType: returnType.trimmedDescription,
                     parameters: [],
-                    returnType: nil
+                    returnType: nil,
+                    isTyped: false,
+                    responseStatus: nil,
+                    statusAnnotation: nil,
+                    line: converter.location(for: function.name.position).line
                 )
             )
         }
         return found
     }
 
+    /// The status named by `@JSONResponse(status: .created)`, as written — `created`. Resolving it to a
+    /// code needs the document, so that happens where the document is in hand.
+    private func responseStatus(of attributes: AttributeListSyntax) -> (status: String, annotation: String)? {
+        for element in attributes {
+            guard let attribute = element.as(AttributeSyntax.self),
+                case .argumentList(let list) = attribute.arguments
+            else { continue }
+            let name = attribute.attributeName.trimmedDescription
+            // `@JSONResponse(status:)` is labelled; `@ResponseStatus(_:)` is positional.
+            let argument: LabeledExprSyntax?
+            switch name {
+            case "JSONResponse": argument = list.first { $0.label?.text == "status" }
+            case "ResponseStatus": argument = list.first { $0.label == nil }
+            default: continue
+            }
+            guard let argument else { continue }
+            let written = argument.expression.trimmedDescription
+            return (written.hasPrefix(".") ? String(written.dropFirst()) : written, name)
+        }
+        return nil
+    }
+
     /// An `@Operation` method: every parameter carries a binding wrapper, and the return type is the
     /// response body the shim wraps.
     private func typedOperation(_ operationID: String, _ function: FunctionDeclSyntax) -> DiscoveredOperation {
-        guard let returnType = function.signature.returnClause?.type else {
-            diagnose(
-                "@Operation '\(operationID)' must return the operation's response body. A handler with no "
-                    + "response is not expressible yet — use @RawOperation.",
-                at: function.name
-            )
-        }
+        // No return clause is not an error: it is how a documented no-content response is written. The
+        // emitter checks that against the response it selects.
+        let returnType = function.signature.returnClause?.type.trimmedDescription
         var parameters: [BoundParameter] = []
         for parameter in function.signature.parameterClause.parameters {
             var binding: String?
@@ -222,6 +255,7 @@ final class ControllerScanner: SyntaxVisitor {
                 )
             )
         }
+        let named = responseStatus(of: function.attributes)
         return DiscoveredOperation(
             operationID: operationID,
             middleware: middlewareArguments(of: function.attributes),
@@ -229,7 +263,11 @@ final class ControllerScanner: SyntaxVisitor {
             inputType: nil,
             outputType: nil,
             parameters: parameters,
-            returnType: returnType.trimmedDescription
+            returnType: returnType,
+            isTyped: true,
+            responseStatus: named?.status,
+            statusAnnotation: named?.annotation,
+            line: converter.location(for: function.name.position).line
         )
     }
 

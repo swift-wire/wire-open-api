@@ -76,6 +76,32 @@ struct GeneratorSafeNamesTests {
         }
     }
 
+    /// Every status the generator can name, read back from it.
+    static let statusGolden: [(code: Int, caseName: String)] = {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("status-golden.tsv")
+        guard let contents = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        return contents.split(separator: "\n").compactMap { line in
+            guard !line.hasPrefix("#") else { return nil }
+            let columns = line.split(separator: "\t").map(String.init)
+            guard columns.count == 2, let code = Int(columns[0]) else { return nil }
+            return (code, columns[1])
+        }
+    }()
+
+    @Test("the status table covers every code the generator names")
+    func statusTableLoaded() {
+        #expect(Self.statusGolden.count == 500, "status-golden.tsv should cover 100...599")
+    }
+
+    /// The status table is pure data, so this is a straight comparison — but it is comparison against
+    /// what the generator emitted, not against a list someone typed twice.
+    @Test("the status table reproduces the generator", arguments: GeneratorSafeNamesTests.statusGolden)
+    func statusCaseMatchesTheGenerator(_ row: (code: Int, caseName: String)) {
+        #expect(GeneratorStatusNames.safeName(for: row.code) == row.caseName)
+    }
+
     /// The default is easy to get wrong: a document that says nothing about `namingStrategy` is
     /// **defensive**, not idiomatic, so a shim that assumed idiomatic would misname every symbol in the
     /// most common configuration of all — the one nobody configured.

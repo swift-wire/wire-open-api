@@ -47,6 +47,42 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Task'
+  /tasks/new:
+    post:
+      operationId: createTask
+      parameters:
+        - { name: title, in: query, required: true, schema: { type: string } }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+  /tasks/{id}/delete:
+    post:
+      operationId: deleteTask
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '202': { description: Accepted }
+        '204': { description: Deleted }
+  /tasks/{id}/replace:
+    post:
+      operationId: replaceTask
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: title, in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Replaced
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
 components:
   schemas:
     Task:
