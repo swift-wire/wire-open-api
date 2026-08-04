@@ -1,4 +1,5 @@
 import Foundation
+import OpenAPIKit
 import WireOpenAPINaming
 import Yams
 
@@ -33,44 +34,25 @@ func sanitizedKeyFragment(_ key: String) -> String {
 /// How the witness should spell the `UniversalServer`'s `serverURL:` argument, read from the document's
 /// `servers:` block.
 ///
-/// It cannot be defaulted away. The default is `.defaultOpenAPIServerURL`, which is
-/// literally `/` — *not* the document's server — so an operation under `servers: [{url: /api/v1}]` would
-/// register at `/tasks/{id}` and 404 at the path the spec describes. (Found by serving it.) The
-/// generator emits the document's servers as `Servers.ServerN.url()`, so the witness names the first.
+/// It cannot be defaulted away. The default is `.defaultOpenAPIServerURL`, which is literally `/` — *not*
+/// the document's server — so an operation under `servers: [{url: /api/v1}]` would register at
+/// `/tasks/{id}` and 404 at the path the spec describes. (Found by serving it.) The generator emits the
+/// document's servers as `Servers.ServerN.url()`, so the witness names the first.
 enum ServerPrefix {
     /// No `servers:` block: the generator emits an empty `enum Servers {}`, so naming a server would not
-    /// compile. The default is then correct — the document describes no prefix.
+    /// compile. `registerHandlers`' default is then correct — the document describes no prefix.
     case none
     /// One distinct path prefix across the document's servers — name it.
     case server1
 }
 
 /// Resolve the prefix, or exit with a diagnostic when the document's servers disagree.
-///
-/// Several `servers:` entries are ordinary (prod/staging), and harmless here *as long as their path
-/// components agree*: registration uses only the path, so alternatives differing by host register
-/// identically. Entries with **different paths** have no single answer — picking the first would
-/// silently serve some environments' routes at the wrong prefix — so that is an error rather than a
-/// guess.
-func resolveServerPrefix(specPath: String?) -> ServerPrefix {
-    // A group whose document could not be located reads as "no prefix declared" rather than failing here;
-    // `diagnoseCoverage` reports the missing document, with the controller to point at.
-    guard let path = specPath,
-        let contents = try? String(contentsOfFile: path, encoding: .utf8),
-        // `Yams.load` returns `Any?`; casting the optional itself rather than its contents silently
-        // yields nothing, which is how this first read as "no servers declared".
-        let loaded = ((try? Yams.load(yaml: contents)) ?? nil),
-        let document = loaded as? [String: Any]
-    else { return .none }
-
-    let servers = (document["servers"] as? [[String: Any]] ?? []).compactMap { $0["url"] as? String }
-    guard !servers.isEmpty else { return .none }
-
-    // Compare path components only: `https://prod.example.com/v1` and `https://staging.example.com/v1`
-    // register identically.
-    let prefixes = Set(servers.map { URL(string: $0)?.path ?? $0 })
+func resolveServerPrefix(document: OpenAPIKit.DereferencedDocument?, path: String) -> ServerPrefix {
+    guard let document else { return .none }
+    let prefixes = document.serverPathPrefixes
+    guard !prefixes.isEmpty else { return .none }
     guard prefixes.count == 1 else {
-        let listed = servers.sorted().joined(separator: ", ")
+        let listed = prefixes.sorted().joined(separator: ", ")
         FileHandle.standardError.write(
             Data(
                 """
@@ -104,19 +86,6 @@ struct OperationRoute {
     let requestBody: SpecRequestBody?
 }
 
-/// The `requestBody:` entry: whether it must be present, and what it can be.
-struct SpecRequestBody {
-    let isRequired: Bool
-    let contentTypes: [String]
-}
-
-/// One `responses:` entry.
-struct SpecResponse {
-    let code: Int
-    /// The content types declared for it, in document order. Empty means a response with no body.
-    let contentTypes: [String]
-}
-
 /// One `parameters:` entry — its documented name and where it lives.
 struct SpecParameter {
     let name: String
@@ -138,64 +107,17 @@ struct SpecParameter {
     }
 }
 
-/// `operationId` → where it registers, read from the document.
-///
-/// This is the only source of routing: nothing replays the generated `registerHandlers` to discover what
-/// it would have registered, so the document is read directly and each operation is mounted from it.
-func resolveOperationRoutes(specPath: String?) -> [String: OperationRoute] {
-    guard let path = specPath,
-        let contents = try? String(contentsOfFile: path, encoding: .utf8),
-        let loaded = ((try? Yams.load(yaml: contents)) ?? nil),
-        let document = loaded as? [String: Any],
-        let paths = document["paths"] as? [String: Any]
-    else { return [:] }
+/// One `responses:` entry.
+struct SpecResponse {
+    let code: Int
+    /// The content types declared for it, in document order. Empty means a response with no body.
+    let contentTypes: [String]
+}
 
-    var routes: [String: OperationRoute] = [:]
-    for (specPath, item) in paths {
-        guard let item = item as? [String: Any] else { continue }
-        let operations = item
-        for (method, operation) in operations {
-            guard let operation = operation as? [String: Any],
-                let operationID = operation["operationId"] as? String
-            else { continue }
-            // Path-level parameters apply to every operation under that path, so both lists are read.
-            let declared =
-                (item["parameters"] as? [[String: Any]] ?? []) + (operation["parameters"] as? [[String: Any]] ?? [])
-            let parameters = declared.compactMap { entry -> SpecParameter? in
-                guard let name = entry["name"] as? String,
-                    let rawLocation = entry["in"] as? String,
-                    let location = SpecParameter.Location(rawValue: rawLocation)
-                else { return nil }
-                return SpecParameter(name: name, location: location)
-            }
-            let declaredResponses = operation["responses"] as? [String: Any] ?? [:]
-            let responses =
-                declaredResponses
-                .compactMap { code, value -> SpecResponse? in
-                    guard let code = Int(code) else { return nil }  // `default` and `2XX` are not statuses
-                    let content = (value as? [String: Any])?["content"] as? [String: Any] ?? [:]
-                    return SpecResponse(code: code, contentTypes: content.keys.sorted())
-                }
-                .sorted { $0.code < $1.code }
-            let declaredBody = operation["requestBody"] as? [String: Any]
-            let requestBody = declaredBody.map { entry in
-                SpecRequestBody(
-                    // OpenAPI's default is `required: false`, which is also the generator's: the `Input`
-                    // member is optional unless the document says otherwise.
-                    isRequired: entry["required"] as? Bool ?? false,
-                    contentTypes: (entry["content"] as? [String: Any] ?? [:]).keys.sorted()
-                )
-            }
-            routes[operationID] = OperationRoute(
-                method: method.uppercased(),
-                path: specPath,
-                parameters: parameters,
-                responses: responses,
-                requestBody: requestBody
-            )
-        }
-    }
-    return routes
+/// The `requestBody:` entry: whether it must be present, and what it can be.
+struct SpecRequestBody {
+    let isRequired: Bool
+    let contentTypes: [String]
 }
 
 // MARK: - the naming strategy

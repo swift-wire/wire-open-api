@@ -23,6 +23,7 @@ extension DirectDispatchEmitter {
             )
         }
         diagnoseDuplicates()
+        diagnoseUndeclaredOperations()
         diagnoseTypedBindings()
         diagnoseTypedResponses()
         let marked = byOperationID
@@ -30,11 +31,38 @@ extension DirectDispatchEmitter {
         guard !missing.isEmpty else { return }
         fail(
             """
-            every operation the document declares must carry @RawOperation, and \
-            \(missing.joined(separator: ", ")) \(missing.count == 1 ? "does" : "do") not. Mark the \
-            \(missing.count == 1 ? "method that implements it" : "methods that implement them").
+            every operation the document declares must be implemented, and \
+            \(missing.joined(separator: ", ")) \(missing.count == 1 ? "is" : "are") not. Mark the \
+            \(missing.count == 1 ? "method that implements it" : "methods that implement them") with \
+            @Operation or @RawOperation.
             """
         )
+    }
+
+    /// A marked method naming an operation the document does not declare.
+    ///
+    /// Without this the method is simply never mounted — nothing registers it, because registration
+    /// iterates the *document* — while the conformer still emits a forwarder for it, naming types derived
+    /// from an id that describes nothing. The failure then lands inside generated code as
+    /// "'GhostOperation' is not a member type of enum 'Operations'", which says nothing about the marker
+    /// that caused it.
+    private func diagnoseUndeclaredOperations() {
+        for controller in controllers {
+            for operation in controller.operations where operationRoutes[operation.operationID] == nil {
+                let declared = operationRoutes.keys.sorted()
+                let listed =
+                    declared.isEmpty
+                    ? "The document declares none."
+                    : "It declares \(declared.map { "'\($0)'" }.joined(separator: ", "))."
+                fail(
+                    """
+                    '\(operation.methodName)' is marked as operation '\(operation.operationID)', which the \
+                    document does not declare. \(listed)
+                    """,
+                    at: operation
+                )
+            }
+        }
     }
 
     /// Two controllers implementing one operationId would each be a plausible target and only one could

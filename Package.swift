@@ -30,6 +30,11 @@ let package = Package(
         .package(url: "https://github.com/swiftlang/swift-syntax", branch: "release/6.4.x"),
         // Reads the document's `servers:` block — the only part of the spec the codegen needs today.
         // The same parser swift-openapi-generator uses, and JSON is valid YAML, so `openapi.json` works.
+        // Pinned to the range swift-openapi-generator uses, so a consumer resolving both does not end up
+        // with two OpenAPIKits. Reading the document with the same model the generator reads it with is
+        // the point: `$ref`s, path-level parameters and `default` responses are then handled once, by a
+        // library, rather than by a dictionary walk that silently drops what it does not recognise.
+        .package(url: "https://github.com/mattpolzin/OpenAPIKit", from: "6.1.0"),
         .package(url: "https://github.com/jpsim/Yams.git", "4.0.0"..<"7.0.0"),
         // Operations are collated as WireMVC routes (M6d.1b), so wire-mvc is a core dependency. It is
         // proposal-native (tools 6.4, macOS 26), which is why this package is too.
@@ -79,6 +84,9 @@ let package = Package(
             name: "WireOpenAPIGen",
             dependencies: [
                 "WireOpenAPINaming",
+                .product(name: "OpenAPIKit", package: "OpenAPIKit"),
+                .product(name: "OpenAPIKit30", package: "OpenAPIKit"),
+                .product(name: "OpenAPIKitCompat", package: "OpenAPIKit"),
                 .product(name: "SwiftSyntax", package: "swift-syntax"),
                 .product(name: "SwiftParser", package: "swift-syntax"),
                 .product(name: "Yams", package: "Yams"),
