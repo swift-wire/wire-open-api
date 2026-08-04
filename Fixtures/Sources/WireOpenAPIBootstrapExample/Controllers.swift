@@ -35,7 +35,7 @@ struct RequestIdentity: Sendable {
 
     @Inject init(seed: HTTPRequest) {
         self.path = seed.path ?? "/"
-        print("scope: constructed for \(self.path)")
+        trace("scope: constructed for \(self.path)")
     }
 }
 
@@ -154,7 +154,7 @@ struct TaskListController {
         // Not mapped here, so the *controller's* mapping answers it — 500, where `summariseTask`'s own
         // mapping of the same error answers 404.
         if id == "missing" { throw NoSuchTask() }
-        print("deleted: \(id)")
+        trace("deleted: \(id)")
     }
 
     /// **Two** documented successes, so the document cannot say which one this handler returns and the

@@ -1,5 +1,4 @@
 import BasicContainers
-import Foundation
 import HTTPAPIs
 import HTTPTypes
 import Logging
@@ -23,14 +22,6 @@ struct AppBootstrap {
     /// Returns the *concrete* server: the proposal's `Reader`/`ResponseSender` are `~Copyable`, which a
     /// bare `some HTTPServer` opaque return can't express.
     func createServer() throws -> NIOHTTPServer {
-        // The log *is* this fixture's evidence — CI asserts on `apikey:`, `audit:` and `scope:` lines to
-        // prove middleware and scope entry ran, since a component that silently does not run still
-        // produces a correct response. Redirected to a file, stdout is block-buffered, so a probe that
-        // kills the server loses the buffer and every one of those assertions fails for a reason that has
-        // nothing to do with the code. Line-buffering here makes that independent of how it was launched,
-        // rather than depending on the caller remembering `stdbuf -oL`.
-        setvbuf(stdout, nil, _IOLBF, 0)
-
         return NIOHTTPServer(
             logger: Logger(label: "WireOpenAPIBootstrapExample"),
             configuration: try .init(
