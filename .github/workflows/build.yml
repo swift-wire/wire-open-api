@@ -107,17 +107,46 @@ jobs:
           # @ErrorResponse on an OpenAPI operation. `missing` is mapped at both scopes and route scope
           # must win; `secret` is mapped only at controller scope, to a status the document does not
           # declare, which becomes `.undocumented(statusCode:)`.
-          mappedDocumented=$(curl -s -o /dev/null -w '%{http_code}' \
+          mappedDocumented=$(curl -s -w ' [%{http_code}]' \
             http://127.0.0.1:8080/api/v1/tasks/missing/summary)
           mappedUndocumented=$(curl -s -o /dev/null -w '%{http_code}' \
             http://127.0.0.1:8080/api/v1/tasks/secret/summary)
+          # The same error type, on an operation that does *not* map it itself, so the controller's
+          # mapping answers — 500 where summariseTask's own answers 404.
+          mappedController=$(curl -s -o /dev/null -X POST -w '%{http_code}' \
+            http://127.0.0.1:8080/api/v1/tasks/missing/delete)
+          # Mapped at the terminal, not in the forwarder: a body the deserializer rejected never reached
+          # the handler, so only a DecodingError mapping out there can claim it. 422 rather than the
+          # runtime's own 400 is the evidence it did.
+          mappedDecode=$(curl -s -o /dev/null -X POST -H 'Content-Type: application/json' -d 'not json' \
+            -w '%{http_code}' "http://127.0.0.1:8080/api/v1/tasks/new?title=x")
+          # The same mapping, the other side. The body here is *valid*, so the deserializer did not fail —
+          # the handler threw the DecodingError itself, which only the forwarder's copy can catch, and it
+          # answers with the document's own 422 case.
+          mappedDecodeInside=$(curl -s -o /dev/null -X POST -H 'Content-Type: application/json' \
+            -d '{"id":"z","title":"t"}' -w '%{http_code}' \
+            "http://127.0.0.1:8080/api/v1/tasks/new?title=corrupt")
           # A thrown error becomes a response the *document* describes, serialised by the generator like
           # any success — and route-scope mappings fold inside controller-scope ones, so 404 here rather
           # than the controller's 500 for the same error type.
-          [ "$mappedDocumented" = 404 ] \
-            || { echo "@ErrorResponse route scope did not win ($mappedDocumented)"; exit 1; }
+          case "$mappedDocumented" in
+            *"[404]") ;;
+            *) echo "@ErrorResponse route scope did not win ($mappedDocumented)"; exit 1;;
+          esac
           [ "$mappedUndocumented" = 403 ] \
-            || { echo "@ErrorResponse to an undocumented status failed ($mappedUndocumented)"; exit 1; }
+            || { echo "@ErrorResponse route-scope mapping failed ($mappedUndocumented)"; exit 1; }
+          [ "$mappedController" = 500 ] \
+            || { echo "@ErrorResponse controller-scope mapping failed ($mappedController)"; exit 1; }
+          [ "$mappedDecode" = 422 ] \
+            || { echo "@ErrorResponse(DecodingError.self) at the terminal failed ($mappedDecode)"; exit 1; }
+          [ "$mappedDecodeInside" = 422 ] \
+            || { echo "@ErrorResponse(DecodingError.self) in the forwarder failed ($mappedDecodeInside)"; exit 1; }
+          # The three-argument form: 404 declares a Problem, so the mapping supplies one and the generator
+          # serialises it as that response's body.
+          case "$(plain "$mappedDocumented")" in
+            *'"message" : "no such task"'*) ;;
+            *) echo "the body-returning @ErrorResponse form did not produce its body"; exit 1;;
+          esac
 
           # Responses the shim constructs: a non-200 success inferred from the document, a no-content
           # response chosen by @ResponseStatus, and one chosen by @JSONResponse — the two annotations

@@ -25,6 +25,7 @@ paths:
     get:
       operationId: listTasks
       responses:
+        '500': { description: Failed }
         '200':
           description: Task ids
           content:
@@ -50,7 +51,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Task'
-        '404': { description: No such task }
+        '404':
+          description: No such task
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { description: Not allowed }
   /tasks/new:
     post:
       operationId: createTask
@@ -62,6 +68,11 @@ paths:
       parameters:
         - { name: title, in: query, required: true, schema: { type: string } }
       responses:
+        '500': { description: Failed }
+        # Declared so the DecodingError mapping has a documented case to construct *inside* the
+        # forwarder. Without it the mapping still answers, from the terminal — the difference is only
+        # which side of the generator the response is built on.
+        '422': { description: Could not decode }
         '201':
           description: Created
           content:
@@ -73,6 +84,7 @@ paths:
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
       responses:
+        '500': { description: Failed }
         '202': { description: Accepted }
         '204': { description: Deleted }
   /tasks/{id}/replace:
@@ -86,6 +98,7 @@ paths:
         - { name: id, in: path, required: true, schema: { type: string } }
         - { name: title, in: query, required: true, schema: { type: string } }
       responses:
+        '500': { description: Failed }
         '200':
           description: Replaced
           content:
@@ -100,6 +113,11 @@ components:
   parameters:
     TaskId: { name: id, in: path, required: true, schema: { type: string } }
   schemas:
+    Problem:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string }
     Task:
       type: object
       required: [id, title]

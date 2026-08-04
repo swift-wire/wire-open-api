@@ -125,15 +125,25 @@ extension DirectDispatchEmitter {
         // shadowed one would emit an unreachable `catch`, which Swift accepts silently. Dropping it makes
         // first-match-wins visible in the output instead of implied by clause order.
         var seen: Set<String> = []
-        let mappings = (operation.errorMappings + controller.errorMappings).filter {
-            seen.insert($0.errorType).inserted
-        }
+        // Terminal-scoped types can be thrown by the handler too — a `DecodingError` from decoding
+        // something by hand, and a catch-all by definition — so they are emitted here as well, and get
+        // the document's own response case. Only when the document declares that status, though: the
+        // point of those mappings is breadth, and requiring every covered operation to declare the
+        // status would tax exactly the mappings meant to be broad. The terminal copy answers the rest,
+        // with the same status and the same body, so nothing is lost by skipping this one.
+        let mappings = (operation.errorMappings + controller.errorMappings)
+            .filter { seen.insert($0.errorType).inserted }
+            .filter { !$0.isTerminalScoped || declaresStatus($0, for: operation) }
         guard !mappings.isEmpty else { return "" }
         return mappings.map { mapping in
-            """
-            \(indent)} catch is \(mapping.errorType) {
-            \(indent)    return \(errorOutcome(mapping, for: operation))
-            """
+            let pattern =
+                mapping.bodyClosure == nil
+                ? "catch is \(mapping.errorType)"
+                : "catch let wireOpenAPIError as \(mapping.errorType)"
+            return """
+                \(indent)} \(pattern) {
+                \(indent)    return \(errorOutcome(mapping, for: operation))
+                """
         }
         .joined(separator: "\n")
     }
@@ -141,16 +151,96 @@ extension DirectDispatchEmitter {
     /// What a mapped error returns: the document's own response case when it declares that status and it
     /// carries no body, and `.undocumented(statusCode:)` otherwise — the generated escape for a status
     /// the document does not describe.
+    /// What a mapped error returns: the document's own response case.
+    ///
+    /// No `.undocumented` fallback any more. A mapping emitted inside the forwarder answers *on behalf of
+    /// the operation*, so `diagnoseErrorMappings` requires it to name a status the document declares and
+    /// that carries no body — which leaves exactly one thing to construct.
     private func errorOutcome(_ mapping: ErrorMapping, for operation: DiscoveredOperation) -> String {
-        let responses = operationRoutes[operation.operationID]?.responses ?? []
-        let documented = responses.first {
+        let documented = operationRoutes[operation.operationID]?.responses.first {
             GeneratorStatusNames.safeName(for: $0.code) == mapping.status
         }
-        guard let documented, documented.contentTypes.isEmpty else {
-            let code = documented?.code ?? statusCode(named: mapping.status)
-            return ".undocumented(statusCode: \(code), .init())"
+        let code = documented?.code ?? statusCode(named: mapping.status)
+        let caseName = GeneratorStatusNames.safeName(for: code)
+        // One form per shape, and the document picks: a response carrying no body can only be a bare
+        // case, one carrying a body can only be built from a value. `diagnoseErrorMappings` has already
+        // rejected the mismatch, so there is nothing to decide here.
+        guard let body = mapping.bodyClosure else { return ".\(caseName)(.init())" }
+        return ".\(caseName)(.init(body: .json(try wireOpenAPIErrorBody(wireOpenAPIError, \(body)))))"
+    }
+
+    /// Whether the document declares this mapping's status for the operation.
+    func declaresStatus(_ mapping: ErrorMapping, for operation: DiscoveredOperation) -> Bool {
+        (operationRoutes[operation.operationID]?.responses ?? [])
+            .contains { GeneratorStatusNames.safeName(for: $0.code) == mapping.status }
+    }
+
+    /// The `rejectionResponse:` closure the terminal consults — the mappings that can only be matched out
+    /// there, in the order they were written.
+    ///
+    /// A `ServerError` is unwrapped first: the runtime puts the real cause in its public
+    /// `underlyingError`, which for a body it could not parse is a `DecodingError`. Statuses are echoed as
+    /// the author wrote them, because out here the response is assembled directly rather than being one of
+    /// the document's cases — and a request that failed to decode never became this operation's `Input`,
+    /// so the operation's documented responses do not describe it.
+    func terminalRejectionClosure(
+        _ controller: DiscoveredController,
+        _ operation: DiscoveredOperation,
+        indent: String
+    ) -> String? {
+        var seen: Set<String> = []
+        let mappings = (operation.errorMappings + controller.errorMappings)
+            .filter(\.isTerminalScoped)
+            .filter { seen.insert($0.errorType).inserted }
+        guard !mappings.isEmpty else { return nil }
+        let clauses = mappings.map { mapping -> String in
+            let isCatchAll = ["Error", "Swift.Error"].contains(mapping.errorType)
+            // The body form encodes here rather than going through the generator's serializer, which is
+            // out of reach: this request never became an `Input`. An encoding failure falls through to the
+            // next tier rather than being swallowed — a payload that will not encode is a programming
+            // error, and 500 is the honest answer to it.
+            guard let body = mapping.bodyClosure else {
+                let outcome = "(HTTPResponse(status: .\(mapping.status)), nil)"
+                guard !isCatchAll else { return "\(indent)    return \(outcome)" }
+                return """
+                    \(indent)    if wireOpenAPICause is \(mapping.errorType) {
+                    \(indent)        return \(outcome)
+                    \(indent)    }
+                    """
+            }
+            let encoded = """
+                \(indent)        if let wireOpenAPIData = try? JSONEncoder().encode(\(body)(wireOpenAPITyped)) {
+                \(indent)            return (
+                \(indent)                HTTPResponse(
+                \(indent)                    status: .\(mapping.status),
+                \(indent)                    headerFields: [.contentType: "application/json"]
+                \(indent)                ),
+                \(indent)                HTTPBody([UInt8](wireOpenAPIData))
+                \(indent)            )
+                \(indent)        }
+                """
+            guard !isCatchAll else {
+                return """
+                    \(indent)    do {
+                    \(indent)        let wireOpenAPITyped = wireOpenAPICause
+                    \(encoded)
+                    \(indent)    }
+                    """
+            }
+            return """
+                \(indent)    if let wireOpenAPITyped = wireOpenAPICause as? \(mapping.errorType) {
+                \(encoded)
+                \(indent)    }
+                """
         }
-        return ".\(GeneratorStatusNames.safeName(for: documented.code))(.init())"
+        return """
+            \(indent)rejectionResponse: { wireOpenAPIRejection in
+            \(indent)    let wireOpenAPICause =
+            \(indent)        (wireOpenAPIRejection as? ServerError)?.underlyingError ?? wireOpenAPIRejection
+            \(clauses.joined(separator: "\n"))
+            \(indent)    return nil
+            \(indent)},
+            """
     }
 
     /// The numeric status a written name refers to, found by inverting the generator's own table — the

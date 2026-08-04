@@ -35,6 +35,7 @@ public enum WireOpenAPIRoutes {
         pathParameters: [String: Substring],
         reader: consuming Reader,
         sender: consuming Sender,
+        rejectionResponse: @escaping @Sendable (any Error) -> (HTTPResponse, HTTPBody?)? = { _ in nil },
         maximumBodySize: Int = 1_000_000
     ) async throws
     where
@@ -43,7 +44,11 @@ public enum WireOpenAPIRoutes {
         Sender.Writer: ~Copyable
     {
         try await invoke(
-            Terminal(handler: handler, maximumBodySize: maximumBodySize),
+            Terminal(
+                handler: handler,
+                rejectionResponse: rejectionResponse,
+                maximumBodySize: maximumBodySize
+            ),
             request: request,
             metadata: ServerRequestMetadata(pathParameters: pathParameters),
             reader: reader,
@@ -58,6 +63,9 @@ public enum WireOpenAPIRoutes {
             @Sendable (HTTPRequest, HTTPBody?, ServerRequestMetadata) async throws -> (
                 HTTPResponse, HTTPBody?
             )
+        /// The generated witness's `@ErrorResponse` mappings for errors only matchable out here. Carried
+        /// with the handler because it is part of what this route does, not a knob on how it is invoked.
+        let rejectionResponse: @Sendable (any Error) -> (HTTPResponse, HTTPBody?)?
         let maximumBodySize: Int
     }
 
@@ -104,9 +112,22 @@ public enum WireOpenAPIRoutes {
         let responseBody: HTTPBody?
         do {
             (response, responseBody) = try await terminal.handler(request, body, metadata)
-        } catch let error as any HTTPResponseConvertible {
-            response = HTTPResponse(status: error.httpStatus, headerFields: error.httpHeaderFields)
-            responseBody = error.httpBody
+        } catch {
+            // Two tiers, in order. `rejectionResponse` is the generated witness's `@ErrorResponse`
+            // mappings for errors that can only be matched out here — a `DecodingError` from the
+            // deserializer, or a catch-all — supplied as a function so this stays free of policy.
+            //
+            // Then the runtime's own mapping, via `HTTPResponseConvertible`, which `ServerError` conforms
+            // to. Anything else propagates, leaving errors the *handler* threw to the mappings emitted
+            // inside the forwarder, which have already had their turn.
+            if let mapped = terminal.rejectionResponse(error) {
+                (response, responseBody) = mapped
+            } else if let convertible = error as? any HTTPResponseConvertible {
+                response = HTTPResponse(status: convertible.httpStatus, headerFields: convertible.httpHeaderFields)
+                responseBody = convertible.httpBody
+            } else {
+                throw error
+            }
         }
 
         // Send the generator's `HTTPResponse` verbatim rather than rebuilding it from a status: it
@@ -120,4 +141,13 @@ public enum WireOpenAPIRoutes {
             try await sender.sendAndFinish(response)
         }
     }
+}
+
+/// Applies an `@ErrorResponse` body closure to the error it matched.
+///
+/// Declared `throws` rather than `rethrows` on purpose: the generated call is always written with `try`,
+/// and a `rethrows` helper called with a non-throwing closure would make that `try` warn. The author's
+/// closure may or may not throw, and the generated code should not have to know which.
+public func wireOpenAPIErrorBody<E, Body>(_ error: E, _ body: (E) throws -> Body) throws -> Body {
+    try body(error)
 }

@@ -118,6 +118,10 @@ struct DirectDispatchEmitter {
         _ operation: DiscoveredOperation,
         indent: String
     ) -> String {
+        // The mappings that can only be matched at the terminal, if any.
+        let rejection =
+            terminalRejectionClosure(controller, operation, indent: indent + "    ")
+            .map { $0 + "\n" } ?? ""
         let call = """
             \(indent)let wireOpenAPIHandler:
             \(indent)    @Sendable (HTTPRequest, HTTPBody?, ServerRequestMetadata) async throws -> (
@@ -130,8 +134,8 @@ struct DirectDispatchEmitter {
             \(indent)    }
             \(indent)try await WireOpenAPIRoutes.invoke(
             \(indent)    handler: wireOpenAPIHandler, request: request, pathParameters: parameters,
-            \(indent)    reader: reader, sender: sender
-            \(indent))
+            \(indent)    reader: reader, sender: sender\(rejection.isEmpty ? "" : ",")
+            \(rejection)\(indent))
             """
         // This operation's controller is app-scoped: nothing about its dispatch varies per request, so the
         // server built at registration is used as-is — even when a sibling controller is request-scoped.

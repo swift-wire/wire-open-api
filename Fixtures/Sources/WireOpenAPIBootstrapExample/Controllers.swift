@@ -77,8 +77,14 @@ struct TaskController {
 /// the same app-scoped `TaskStore`, so one graph sits behind the whole spec.
 @Singleton
 @OpenAPIController()
+// Controller scope: covers every operation this controller owns *except* those that map the same error
+// themselves. `summariseTask` does, so it is not covered — which is what makes it an ordering test.
 @ErrorResponse(NoSuchTask.self, .internalServerError)
-@ErrorResponse(NotAuthorised.self, .forbidden)
+// Matched at the *terminal*, not in the forwarder: a body the generator could not parse fails before the
+// handler is ever called, so no clause inside it could see this. `DecodingError` is the standard
+// library's, which is why it needs no vocabulary of ours — and mapping it here answers 422 where the
+// runtime's own default is 400.
+@ErrorResponse(DecodingError.self, .unprocessableContent)
 struct TaskListController {
     @Inject let store: TaskStore
 
@@ -100,7 +106,11 @@ struct TaskListController {
     /// becomes `.undocumented(statusCode:)` — the generated escape, still a real response rather than a
     /// dropped connection.
     @Operation
-    @ErrorResponse(NoSuchTask.self, .notFound)
+    // The document's 404 carries a `Problem`, so a status alone cannot construct it — this is the form
+    // that can, and the pair form is rejected here. Where the document declares no body, the reverse
+    // holds. The document picks; the author cannot pick wrong without being told.
+    @ErrorResponse(NoSuchTask.self, .notFound, { _ in Components.Schemas.Problem(message: "no such task") })
+    @ErrorResponse(NotAuthorised.self, .forbidden)
     func summariseTask(
         @Path id: String,
         @Query("include-done") includeDone: Bool?,
@@ -123,7 +133,13 @@ struct TaskListController {
         @Query("title") title: String,
         @JSONBody draft: Components.Schemas.Task
     ) async throws -> Components.Schemas.Task {
-        .init(id: draft.id, title: title)
+        // A handler can throw the same type the deserializer does. The mapping covers both: this one is
+        // caught inside and answered with the document's 422 case, while a body the *runtime* could not
+        // parse is caught at the terminal and answered with the same status.
+        if title == "corrupt" {
+            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "handmade"))
+        }
+        return .init(id: draft.id, title: title)
     }
 
     /// A **no-content** response. Nothing here is special-cased about 204: the handler returns nothing,
@@ -135,6 +151,9 @@ struct TaskListController {
     @Operation
     @ResponseStatus(.noContent)
     func deleteTask(@Path id: String) async throws {
+        // Not mapped here, so the *controller's* mapping answers it — 500, where `summariseTask`'s own
+        // mapping of the same error answers 404.
+        if id == "missing" { throw NoSuchTask() }
         print("deleted: \(id)")
     }
 
