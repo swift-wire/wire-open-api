@@ -1,3 +1,4 @@
+import Foundation
 import HTTPTypes
 import OrdersAPI
 import Wire
@@ -61,7 +62,13 @@ struct TaskController {
     func getTask(_ input: Operations.GetTask.Input) async throws -> Operations.GetTask.Output {
         .ok(
             .init(
-                body: .json(.init(id: input.path.id, title: "\(store.title(for: input.path.id)) via \(identity.path)"))
+                body: .json(
+                    .init(
+                        id: input.path.id,
+                        title: "\(store.title(for: input.path.id)) via \(identity.path)",
+                        at: fixtureDate
+                    )
+                )
             )
         )
     }
@@ -213,9 +220,16 @@ struct StatusController {
 
     @Get("/tasks")
     @JSONResponse
-    func taskCount() -> TaskCount { TaskCount(count: store.count) }
+    func taskCount() -> TaskCount { TaskCount(count: store.count, at: fixtureDate) }
 }
 
 struct TaskCount: Codable, Sendable {
     let count: Int
+    /// The other half of the comparison: this is encoded by WireMVC's own JSON response path, while
+    /// `Task.at` above goes through the OpenAPI runtime's serializer. Before `WireMVCCoding` these two
+    /// disagreed — Foundation writes a number of seconds since 2001, the OpenAPI runtime writes ISO8601.
+    let at: Date
 }
+
+/// A fixed instant, so the two responses can be compared literally.
+let fixtureDate = Date(timeIntervalSince1970: 1_700_000_000)

@@ -14,8 +14,20 @@ import WireMVCRouter
 //
 // That is the gate this fixture exists for: one app, one router, one `@NotFound`, both authoring styles.
 
+/// The app's coding settings, supplied to the bootstrap by `@Coding` — the app-wide tier.
+///
+/// `sortsKeys` is the *observable* half of the M6d.6 gate. The dates below agree because ISO8601 is now
+/// the default on both sides, which proves the two runtimes were unified but would look the same if the
+/// settings had never travelled. A key order nobody's default produces cannot: an OpenAPI operation
+/// serving sorted JSON has to have read the value declared here.
+@Singleton
+struct AppCoding: CodingSource {
+    var wireMVCCoding: WireMVCCoding { WireMVCCoding(json: .init(sortsKeys: true)) }
+}
+
 @Singleton
 @WireMVCBootstrap
+@Coding(AppCoding.self)
 struct AppBootstrap {
     @Inject let config: ServerConfig
 

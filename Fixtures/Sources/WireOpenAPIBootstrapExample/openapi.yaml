@@ -126,3 +126,8 @@ components:
           type: string
         title:
           type: string
+        # Not required, so existing constructions still compile — but enough to prove an OpenAPI
+        # operation and a `@Get` route now write a date the same way.
+        at:
+          type: string
+          format: date-time
