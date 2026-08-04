@@ -82,9 +82,15 @@ final class ControllerScanner: SyntaxVisitor {
             guard arguments.count == 2 else {
                 // One argument is the closure form.
                 diagnose(
-                    "@ErrorResponse's closure form is not supported for OpenAPI operations yet: it "
-                        + "returns a WireMVCOutcome (a status and bytes), while an operation returns the "
-                        + "document's Output. Use the @ErrorResponse(E.self, .status) form.",
+                    // A closure returns a status and bytes, and neither of the things that
+                    // buys — a status chosen from the error's value, a body that is not JSON — can be
+                    // resolved against the document or checked against it. The two declarative forms are
+                    // the ones a documented response can be built from.
+                    "@ErrorResponse's closure form is not supported for OpenAPI operations: it returns a "
+                        + "WireMVCOutcome — a status and bytes — while an operation answers with one of "
+                        + "the responses its document declares. Use @ErrorResponse(E.self, .status) where "
+                        + "that response carries no body, or @ErrorResponse(E.self, .status, { e in … }) "
+                        + "where it carries one.",
                     at: attribute.attributeName.firstToken(viewMode: .sourceAccurate)
                         ?? attribute.atSign
                 )
