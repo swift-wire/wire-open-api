@@ -110,10 +110,38 @@ extension DirectDispatchEmitter {
             let label = parameter.label.map { "\($0): " } ?? ""
             return "\(label)input.\(inputMember(for: parameter, in: operation))"
         }
+        let call = "try await \(subject).\(operation.methodName)(\(arguments.joined(separator: ", ")))"
+        let response = selectedResponse(for: operation)
+        let caseName = GeneratorStatusNames.safeName(for: response.code)
+        guard operation.returnType != nil else {
+            // A documented no-content response: nothing to carry, so the call stands alone.
+            return """
+                \(indent)\(call)
+                \(indent)return .\(caseName)(.init())
+                """
+        }
         return """
-            \(indent)let wireOpenAPIResult = try await \(subject).\(operation.methodName)(\(arguments.joined(separator: ", ")))
-            \(indent)return .ok(.init(body: .json(wireOpenAPIResult)))
+            \(indent)let wireOpenAPIResult = \(call)
+            \(indent)return .\(caseName)(.init(body: .json(wireOpenAPIResult)))
             """
+    }
+
+    /// Which of the document's responses this handler constructs.
+    ///
+    /// The document decides, as it does for parameters. One documented success needs no saying; several
+    /// are ambiguous and the handler has to name one with `@JSONResponse(status:)`. Both cases are
+    /// diagnosed in `diagnoseTypedResponses`, so this only has to agree with it.
+    func selectedResponse(for operation: DiscoveredOperation) -> SpecResponse {
+        let responses = operationRoutes[operation.operationID]?.responses ?? []
+        if let written = operation.responseStatus,
+            let named = responses.first(where: {
+                GeneratorStatusNames.safeName(for: $0.code) == written
+            })
+        {
+            return named
+        }
+        return responses.first { (200..<300).contains($0.code) }
+            ?? SpecResponse(code: 200, contentTypes: ["application/json"])
     }
 
     /// `path.id` / `query.includeDone` / `headers.xRequestId` — the location from the *document*, the

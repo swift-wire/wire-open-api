@@ -20,6 +20,7 @@ excluded:
   # the one thing that would make it unmaintainable. Its correctness is held by a golden table generated
   # from the real generator (Scripts/refresh-naming-golden.py), not by style rules.
   - Sources/WireOpenAPINaming/GeneratorSafeNames.swift
+  - Sources/WireOpenAPINaming/GeneratorStatusNames.swift
 line_length: 150
 function_body_length:
   warning: 50

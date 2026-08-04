@@ -96,6 +96,16 @@ struct OperationRoute {
     /// parameter reads `input.path.x`, `input.query.x` or `input.headers.x`. The document is the only
     /// authority for that: a binding annotation restating it could disagree with it.
     let parameters: [SpecParameter]
+    /// The operation's declared responses. The typed shim constructs one of these, so which status and
+    /// which content type is a question the document answers.
+    let responses: [SpecResponse]
+}
+
+/// One `responses:` entry.
+struct SpecResponse {
+    let code: Int
+    /// The content types declared for it, in document order. Empty means a response with no body.
+    let contentTypes: [String]
 }
 
 /// One `parameters:` entry — its documented name and where it lives.
@@ -149,10 +159,20 @@ func resolveOperationRoutes(specPath: String?) -> [String: OperationRoute] {
                 else { return nil }
                 return SpecParameter(name: name, location: location)
             }
+            let declaredResponses = operation["responses"] as? [String: Any] ?? [:]
+            let responses =
+                declaredResponses
+                .compactMap { code, value -> SpecResponse? in
+                    guard let code = Int(code) else { return nil }  // `default` and `2XX` are not statuses
+                    let content = (value as? [String: Any])?["content"] as? [String: Any] ?? [:]
+                    return SpecResponse(code: code, contentTypes: content.keys.sorted())
+                }
+                .sorted { $0.code < $1.code }
             routes[operationID] = OperationRoute(
                 method: method.uppercased(),
                 path: specPath,
-                parameters: parameters
+                parameters: parameters,
+                responses: responses
             )
         }
     }

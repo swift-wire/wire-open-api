@@ -95,6 +95,38 @@ struct TaskListController {
         )
     }
 
+    /// A non-200 success, inferred. The document declares exactly one success for this operation — 201 —
+    /// so which response the handler builds needs no saying, and the shim emits `.created(…)`.
+    @Operation
+    func createTask(@Query("title") title: String) async throws -> Components.Schemas.Task {
+        .init(id: "new", title: title)
+    }
+
+    /// A **no-content** response. Nothing here is special-cased about 204: the handler returns nothing,
+    /// so the response it constructs must be one that carries no body — and since this operation
+    /// documents two of those (202 and 204), it says which.
+    ///
+    /// `@ResponseStatus` rather than `@JSONResponse(status:)`, the same split WireMVC draws: one is for a
+    /// handler that returns a body, the other for one that does not. Using the wrong one is diagnosed.
+    @Operation
+    @ResponseStatus(.noContent)
+    func deleteTask(@Path id: String) async throws {
+        print("deleted: \(id)")
+    }
+
+    /// **Two** documented successes, so the document cannot say which one this handler returns and the
+    /// author has to. `@JSONResponse` is WireMVC's own, like the parameter wrappers.
+    @Operation
+    @JSONResponse(status: .created)
+    func replaceTask(
+        @Path id: String,
+        @Query("title") title: String
+    ) async throws
+        -> Components.Schemas.Task
+    {
+        .init(id: id, title: title)
+    }
+
     /// Route-scope middleware: `Audit` folds around this operation only. `@RawOperation` is what ties the
     /// method to the document's `listTasks`.
     @RawOperation

@@ -104,6 +104,14 @@ jobs:
           typed=$(curl -s -H 'X-Request-Id: abc123' \
             "http://127.0.0.1:8080/api/v1/tasks/9/summary?include-done=true" -w ' [%{http_code}]')
           typedBare=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/api/v1/tasks/9/summary)
+          # Responses the shim constructs: a non-200 success inferred from the document, a no-content
+          # response chosen by @ResponseStatus, and one chosen by @JSONResponse — the two annotations
+          # splitting on whether the handler returns a body.
+          created=$(curl -s -X POST "http://127.0.0.1:8080/api/v1/tasks/new?title=hello" -w ' [%{http_code}]')
+          deleted=$(curl -s -o /dev/null -X POST http://127.0.0.1:8080/api/v1/tasks/7/delete \
+            -w '%{http_code}:%{size_download}')
+          replaced=$(curl -s -X POST "http://127.0.0.1:8080/api/v1/tasks/9/replace?title=renamed" \
+            -w ' [%{http_code}]')
           kill "$pid" 2>/dev/null || true
           [ "$ok" = 1 ] || { echo "the fixture did not bind"; cat serverlog.txt; exit 1; }
           echo "GET /api/v1/tasks/42 → $openapi"
@@ -202,6 +210,22 @@ jobs:
           case "$typedBare" in
             *'"title" : "summary of task-9 done=false req=-"'*"[200]") ;;
             *) echo "the typed operation mishandled absent optional parameters"; exit 1;;
+          esac
+
+          # The response side. A status is chosen from the document, not defaulted to 200: `createTask`
+          # documents only 201, so `.created` is inferred; `replaceTask` documents 200 and 201, so the
+          # handler names one. `deleteTask` documents 202 and 204, both content-free, so its Void handler
+          # names one with @ResponseStatus — and must still run, which the log line is the evidence for.
+          case "$created" in
+            *'"title" : "hello"'*"[201]") ;;
+            *) echo "the inferred 201 response was not constructed"; exit 1;;
+          esac
+          [ "$deleted" = "204:0" ] || { echo "the no-content response was not constructed ($deleted)"; exit 1; }
+          grep -q '^deleted: 7' serverlog.txt \
+            || { echo "a no-content handler was not called"; exit 1; }
+          case "$replaced" in
+            *'"title" : "renamed"'*"[201]") ;;
+            *) echo "@JSONResponse(status:) did not select the response"; exit 1;;
           esac
 
           # It is app-scoped, so it enters no request scope even though its sibling in OrdersAPI does.
