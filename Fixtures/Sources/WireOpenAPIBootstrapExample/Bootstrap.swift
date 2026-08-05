@@ -1,4 +1,5 @@
 import BasicContainers
+import Foundation
 import HTTPAPIs
 import HTTPTypes
 import Logging
@@ -14,20 +15,38 @@ import WireMVCRouter
 //
 // That is the gate this fixture exists for: one app, one router, one `@NotFound`, both authoring styles.
 
-/// The app's coding settings, supplied to the bootstrap by `@Coding` — the app-wide tier.
+/// The app's coding settings, selected by `@Coding` on the bootstrap — the app-wide tier.
 ///
-/// `sortsKeys` is the *observable* half of the M6d.6 gate. The dates below agree because ISO8601 is now
-/// the default on both sides, which proves the two runtimes were unified but would look the same if the
+/// Unkeyed, and selected by type: this app has one app-wide coding, so there is nothing to tell apart
+/// and no name to invent. `EpochCoding` below is the case a key exists for.
+///
+/// `sortsKeys` is the *observable* half of the M6d.6 gate. The dates agree because ISO8601 is now the
+/// default on both sides, which proves the two runtimes were unified but would look the same if the
 /// settings had never travelled. A key order nobody's default produces cannot: an OpenAPI operation
 /// serving sorted JSON has to have read the value declared here.
-@Singleton
-struct AppCoding: CodingSource {
-    var wireMVCCoding: WireMVCCoding { WireMVCCoding(json: .init(sortsKeys: true)) }
+@Provides
+let appCoding = WireMVCCoding(json: .init(sortsKeys: true))
+
+/// A second coding, which is what makes this a `BindingKey`: two bindings of one type need distinguishing,
+/// and that is the problem swift-wire's keys already solve.
+///
+/// It writes dates as epoch seconds — deliberately unlike the app's ISO8601, so a route resolving to it
+/// is unmistakable in a response body. `EpochController` overrides with it at controller scope.
+extension WireMVCCoding {
+    static let epoch = BindingKey<WireMVCCoding>()
 }
+
+struct EpochSeconds: DateTranscoding {
+    func encode(_ date: Date) throws -> String { String(Int(date.timeIntervalSince1970)) }
+    func decode(_ string: String) throws -> Date { Date(timeIntervalSince1970: Double(string) ?? 0) }
+}
+
+@Provides(WireMVCCoding.epoch)
+let epochCoding = WireMVCCoding(dates: EpochSeconds(), json: .init(sortsKeys: true))
 
 @Singleton
 @WireMVCBootstrap
-@Coding(AppCoding.self)
+@Coding(WireMVCCoding.self)
 struct AppBootstrap {
     @Inject let config: ServerConfig
 

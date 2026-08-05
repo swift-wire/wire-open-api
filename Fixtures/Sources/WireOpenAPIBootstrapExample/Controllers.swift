@@ -223,6 +223,24 @@ struct StatusController {
     func taskCount() -> TaskCount { TaskCount(count: store.count, at: fixtureDate) }
 }
 
+/// The controller tier, overriding the app's coding for its own routes — and the first time an override
+/// is exercised by a running app rather than asserted in rendered source.
+///
+/// It serves the same `TaskCount` as `StatusController` above, so the two responses differ only by the
+/// coding that reached them: `/status/tasks` writes ISO8601 from the app tier, `/epoch/tasks` writes
+/// seconds. That the first is unaffected is half the point — an override that leaked would be just as
+/// wrong as one that never applied.
+@Singleton
+@Controller("/epoch")
+@Coding(WireMVCCoding.epoch)
+struct EpochController {
+    @Inject let store: TaskStore
+
+    @Get("/tasks")
+    @JSONResponse
+    func taskCount() -> TaskCount { TaskCount(count: store.count, at: fixtureDate) }
+}
+
 struct TaskCount: Codable, Sendable {
     let count: Int
     /// The other half of the comparison: this is encoded by WireMVC's own JSON response path, while

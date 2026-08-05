@@ -102,6 +102,7 @@ jobs:
           summary=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/api/v2/orders)
           crossed2=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/v2/tasks)
           # The typed shim: parameters bound from all three locations, no generated Input in the handler.
+          epoch=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/epoch/tasks)
           typed=$(curl -s -H 'X-Request-Id: abc123' \
             "http://127.0.0.1:8080/api/v1/tasks/9/summary?include-done=true" -w ' [%{http_code}]')
           typedBare=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/api/v1/tasks/9/summary)
@@ -204,6 +205,16 @@ jobs:
             *) echo "the WireMVC route did not write the same instant the same way"; exit 1;; esac
           case "$(plain "$openapi")" in '{"at":'*'"id":"42"'*'"title":'*) ;;
             *) echo "the app-wide sortsKeys did not reach the OpenAPI operation"; exit 1;; esac
+
+          # The controller tier, resolved by a running app rather than asserted in rendered source.
+          # EpochController overrides with a keyed binding that writes seconds; StatusController serves the
+          # same TaskCount from the app tier. An override that leaked would fail the second case as surely
+          # as one that never applied would fail the first.
+          echo "epoch   → $epoch"
+          case "$epoch" in *'"at":"1700000000"'*"[200]") ;;
+            *) echo "the controller-scope @Coding override did not resolve"; exit 1;; esac
+          case "$mvc" in *'"at":"2023-11-14T22:13:20Z"'*) ;;
+            *) echo "a controller-scope @Coding override leaked to another controller"; exit 1;; esac
 
           # @Middleware — the M6d.2 gate. One RequireAPIKey component, declared once, folding around an
           # OpenAPI operation and an annotation-driven @Get alike; one Audit at route scope on a single
