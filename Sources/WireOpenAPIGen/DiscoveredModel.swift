@@ -1,4 +1,5 @@
 import Foundation
+import SwiftSyntax
 
 // What scanning a controller yields: the operations it declares, how each binds its parameters and its
 // response, and the error mappings that surround them. Separated from the scanner itself because the
@@ -101,6 +102,13 @@ struct ErrorMapping {
 
 struct DiscoveredController {
     let typeName: String
+    /// The module this controller is *declared* in — not the one being compiled. They differ whenever a
+    /// controller ships in a library, which is the ordinary case for a shared spec.
+    let homeModule: String
+    /// The controller's own generic parameters, in source order. Empty for a concrete controller.
+    let genericParameters: [GenericParameter]
+    /// Its `where` clause verbatim, if it has one.
+    let genericWhereClause: String?
     let spec: String?
     /// The verbatim argument of each type-level `@Middleware`, in source order — controller-scope
     /// middleware, folded around every one of this controller's operations.
@@ -115,4 +123,26 @@ struct DiscoveredController {
     let seed: String?
     let file: String
     let line: Int
+
+    /// The controller's type as the conformer writes it, with this controller's parameters renamed by
+    /// `prefix` — `TaskController<_wireC0Store>`.
+    ///
+    /// Renaming rather than reusing the written names is what keeps the conformer independent of
+    /// swift-wire's aggregate proxy. Two controllers on one spec can each declare a `Store`, and the proxy
+    /// holds them as *different* parameters, which it disambiguates by its own rule (`Store`, `Store2`).
+    /// Guessing that rule would couple the two emitters; instead every controller's parameters get a
+    /// per-controller prefix here, and the construction site passes the proxy's fields, so the compiler
+    /// infers each one from the value's type. Neither emitter has to know the other's names.
+    func subjectType(prefix: String) -> String {
+        genericParameters.isEmpty
+            ? typeName
+            : "\(typeName)<\(genericParameters.map { prefix + $0.name }.joined(separator: ", "))>"
+    }
+
+    /// This controller's parameters as a conformer clause writes them, renamed by `prefix`.
+    func genericDeclarations(prefix: String) -> [String] {
+        genericParameters.map { parameter in
+            parameter.inheritedType.map { "\(prefix)\(parameter.name): \($0)" } ?? prefix + parameter.name
+        }
+    }
 }

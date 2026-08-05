@@ -16,24 +16,30 @@ import WireMVC
 /// which the runtime's `apiPathComponentsWithServerPrefix` applies. With controllers aggregated per spec,
 /// a per-controller path would also be ambiguous the moment two disagreed.
 ///
-/// The bare form means **this target's own document** — the one generated alongside these sources. A
-/// document belonging to another module is named with `spec:` below.
+/// The bare form means **the document beside this controller** — the one in the module the controller is
+/// declared in. A document owned by a *different* module is named with `spec:` below.
+///
+/// "Beside this controller", not "in the target being compiled": those coincide for an app that generates
+/// its own document, and diverge the moment a spec and its controllers ship together in a library, which
+/// is the ordinary way to serve one document from several runtimes. Resolving against the compiling target
+/// would make the bare form mean something the author cannot see from the file they are reading — the
+/// answer would depend on which executable happened to pull the library in.
 @attached(peer)
 public macro OpenAPIController() =
     #externalMacro(module: "WireOpenAPIMacros", type: "OpenAPIControllerMacro")
 
 /// The other-module form. `spec` names the module owning the generated `APIProtocol` — controllers sharing
-/// it land on one proxy, and each distinct value gets its own. Use it for a document generated into
-/// another module; for one generated into this target, use the bare form above.
+/// it land on one proxy, and each distinct value gets its own. Use it when the document lives somewhere
+/// other than beside the controller; for the one beside it, use the bare form above.
 ///
-/// It is a use-site argument rather than something inferred from where the controller lives, because a
-/// spec's generated types and the controllers implementing it routinely live in different modules — a spec
-/// in `TaskAPI`, its controllers in `TaskClusterApp`. Where the controller is declared therefore says
-/// nothing about which document it implements, which is exactly why this cannot be derived.
+/// It stays a use-site argument, because a spec's generated types and the controllers implementing them
+/// genuinely can live in different modules — a document in `TaskAPI`, its controllers in `TaskClusterApp`.
+/// Where a controller is declared therefore *narrows* which document it implements without settling it,
+/// which is why the bare form defaults to the neighbouring document and this form overrides.
 ///
 /// A value naming no such dependency is an error. It is never taken as a label and quietly resolved
-/// against this target's own document: that would compile against the wrong document and report it as a
-/// missing `@RawOperation` for operations the author never wrote.
+/// against some other document: that would compile against the wrong one and report it as a missing
+/// `@RawOperation` for operations the author never wrote.
 @attached(peer)
 public macro OpenAPIController(spec: String) =
     #externalMacro(module: "WireOpenAPIMacros", type: "OpenAPIControllerMacro")

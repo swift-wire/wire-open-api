@@ -14,27 +14,47 @@ import SwiftSyntax
 /// Collect every `@OpenAPIController` declaration, with the `spec:` group it names.
 final class ControllerScanner: SyntaxVisitor {
     private(set) var controllers: [DiscoveredController] = []
+    let module: String
     private let file: String
     private let converter: SourceLocationConverter
 
-    init(file: String, tree: SourceFileSyntax) {
+    init(module: String, file: String, tree: SourceFileSyntax) {
+        self.module = module
         self.file = file
         self.converter = SourceLocationConverter(fileName: file, tree: tree)
         super.init(viewMode: .sourceAccurate)
     }
 
     override func visit(_ node: StructDeclSyntax) -> SyntaxVisitorContinueKind {
-        record(name: node.name.text, attributes: node.attributes, members: node.memberBlock, at: node.name)
+        record(
+            name: node.name.text,
+            generics: DeclGenerics(node.genericParameterClause, node.genericWhereClause),
+            attributes: node.attributes,
+            members: node.memberBlock,
+            at: node.name
+        )
         return .visitChildren
     }
 
     override func visit(_ node: ClassDeclSyntax) -> SyntaxVisitorContinueKind {
-        record(name: node.name.text, attributes: node.attributes, members: node.memberBlock, at: node.name)
+        record(
+            name: node.name.text,
+            generics: DeclGenerics(node.genericParameterClause, node.genericWhereClause),
+            attributes: node.attributes,
+            members: node.memberBlock,
+            at: node.name
+        )
         return .visitChildren
     }
 
     override func visit(_ node: ActorDeclSyntax) -> SyntaxVisitorContinueKind {
-        record(name: node.name.text, attributes: node.attributes, members: node.memberBlock, at: node.name)
+        record(
+            name: node.name.text,
+            generics: DeclGenerics(node.genericParameterClause, node.genericWhereClause),
+            attributes: node.attributes,
+            members: node.memberBlock,
+            at: node.name
+        )
         return .visitChildren
     }
 
@@ -263,9 +283,13 @@ final class ControllerScanner: SyntaxVisitor {
         FileHandle.standardError.write(Data("\(file):\(line): error: \(message)\n".utf8))
         exit(1)
     }
+}
 
-    private func record(
+// The recording half, in an extension: the visitor above is the traversal, this is what it collects.
+extension ControllerScanner {
+    fileprivate func record(
         name: String,
+        generics: DeclGenerics,
         attributes: AttributeListSyntax,
         members: MemberBlockSyntax,
         at token: TokenSyntax
@@ -283,6 +307,9 @@ final class ControllerScanner: SyntaxVisitor {
             controllers.append(
                 DiscoveredController(
                     typeName: name,
+                    homeModule: module,
+                    genericParameters: generics.parameters,
+                    genericWhereClause: generics.whereClause,
                     spec: spec,
                     middleware: middlewareArguments(of: attributes),
                     operations: operations(in: members),
@@ -297,14 +324,16 @@ final class ControllerScanner: SyntaxVisitor {
 }
 
 /// Every `@OpenAPIController` across the sources the plugin passed.
-func discoverControllers(in sourcePaths: [String]) -> [DiscoveredController] {
+func discoverControllers(in sources: [(module: String, paths: [String])]) -> [DiscoveredController] {
     var discovered: [DiscoveredController] = []
-    for path in sourcePaths {
-        guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else { continue }
-        let tree = Parser.parse(source: contents)
-        let scanner = ControllerScanner(file: path, tree: tree)
-        scanner.walk(tree)
-        discovered.append(contentsOf: scanner.controllers)
+    for group in sources {
+        for path in group.paths {
+            guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else { continue }
+            let tree = Parser.parse(source: contents)
+            let scanner = ControllerScanner(module: group.module, file: path, tree: tree)
+            scanner.walk(tree)
+            discovered.append(contentsOf: scanner.controllers)
+        }
     }
     return discovered
 }

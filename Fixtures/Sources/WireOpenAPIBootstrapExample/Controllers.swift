@@ -18,9 +18,20 @@ import WireOpenAPI
 struct NoSuchTask: Error {}
 struct NotAuthorised: Error {}
 
+/// The store's *protocol*, so a controller can depend on it generically.
+///
+/// That shape matters more than it looks: `some TaskStoring` cannot be a stored property, so a controller
+/// wanting the abstraction takes it as a lifted generic parameter which swift-wire concretizes when it
+/// builds the graph. It is how a real app injects a repository, and it makes the aggregate proxy — and
+/// therefore the emitted conformer — generic in step. `TaskListController` below is the generic one.
+protocol TaskStoring: Sendable {
+    func title(for id: String) -> String
+    var count: Int { get }
+}
+
 /// An app-scoped dependency both controllers share, so the fixture also shows one graph behind both.
-@Singleton
-struct TaskStore: Sendable {
+@Singleton(as: TaskStoring.self)
+struct TaskStore: TaskStoring {
     @Inject init() {}
 
     func title(for id: String) -> String { "task-\(id)" }
@@ -54,8 +65,8 @@ struct RequestIdentity: Sendable {
 @Scoped(seed: HTTPRequest.self)
 @OpenAPIController()
 @Middleware(RequireAPIKeyKeys.factory)
-struct TaskController {
-    @Inject let store: TaskStore
+struct TaskController<Store: TaskStoring> {
+    @Inject let store: Store
     @Inject let identity: RequestIdentity
 
     @RawOperation
@@ -92,8 +103,8 @@ struct TaskController {
 // library's, which is why it needs no vocabulary of ours — and mapping it here answers 422 where the
 // runtime's own default is 400.
 @ErrorResponse(DecodingError.self, .unprocessableContent)
-struct TaskListController {
-    @Inject let store: TaskStore
+struct TaskListController<Store: TaskStoring> {
+    @Inject let store: Store
 
     /// The **typed** form. No `Operations.SummariseTask.Input` in sight: the parameters are bound from
     /// the document's `path`, `query` and `header` entries, and the return value is wrapped in the
@@ -215,8 +226,8 @@ struct OrderSummaryController {
 @Singleton
 @Controller("/status")
 @Middleware(RequireAPIKeyKeys.factory)
-struct StatusController {
-    @Inject let store: TaskStore
+struct StatusController<Store: TaskStoring> {
+    @Inject let store: Store
 
     @Get("/tasks")
     @JSONResponse
@@ -233,8 +244,8 @@ struct StatusController {
 @Singleton
 @Controller("/epoch")
 @Coding(WireMVCCoding.epoch)
-struct EpochController {
-    @Inject let store: TaskStore
+struct EpochController<Store: TaskStoring> {
+    @Inject let store: Store
 
     @Get("/tasks")
     @JSONResponse
