@@ -1,5 +1,5 @@
 {
-  "originHash" : "495710ab5d5e8afa73f18d7e442ee555fc049e38c86d6c0fd055f6c76718bb12",
+  "originHash" : "efab5c4a64ac95d45504d328038b2c7181fe91489dab76f2edf388cac3a77301",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -213,7 +213,6 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/tachyonics/swift-openapi-generator.git",
       "state" : {
-        "branch" : "swift-wire",
         "revision" : "9e655e0adb9b993ef4cb29a6aa0dfc59b9b42b09"
       }
     },

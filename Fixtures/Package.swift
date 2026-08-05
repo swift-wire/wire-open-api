@@ -52,9 +52,14 @@ let package = Package(
         // emits `fileprivate`. The branch changes that one `accessModifier` to internal — enough, because
         // WireOpenAPIGen's output compiles into the same module. Points back at the released package once
         // upstream takes it.
+        // **Pinned to a revision, not the branch.** A branch dependency re-resolves to whatever the fork's
+        // tip happens to be, so a force-push or an unrelated commit there could change what this fixture
+        // generates — and the fixture is the gate for the whole adapter. `swift-wire` is a working branch
+        // on a fork nobody else watches, which is exactly the kind of reference that moves quietly.
+        // Points back at the released package once upstream takes the change.
         .package(
             url: "https://github.com/tachyonics/swift-openapi-generator.git",
-            branch: "swift-wire"
+            revision: "9e655e0adb9b993ef4cb29a6aa0dfc59b9b42b09"
         ),
         .package(url: "https://github.com/apple/swift-openapi-runtime", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-http-api-proposal.git", .upToNextMinor(from: "0.2.0")),
