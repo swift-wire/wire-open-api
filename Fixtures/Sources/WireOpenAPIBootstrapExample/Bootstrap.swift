@@ -14,20 +14,26 @@ import WireMVCRouter
 //
 // That is the gate this fixture exists for: one app, one router, one `@NotFound`, both authoring styles.
 
-/// The app's coding settings, supplied to the bootstrap by `@Coding` — the app-wide tier.
+/// The app's coding settings, selected by `@Coding` on the bootstrap — the app-wide tier.
+///
+/// A `BindingKey` rather than a wrapper type: swift-wire keys the graph by type, and all three coding
+/// tiers select the same type, so a key is what distinguishes them. It is also the mechanism swift-wire
+/// already has for binding one type more than once, which `@Middleware` uses too.
 ///
 /// `sortsKeys` is the *observable* half of the M6d.6 gate. The dates below agree because ISO8601 is now
 /// the default on both sides, which proves the two runtimes were unified but would look the same if the
 /// settings had never travelled. A key order nobody's default produces cannot: an OpenAPI operation
 /// serving sorted JSON has to have read the value declared here.
-@Singleton
-struct AppCoding: CodingSource {
-    var wireMVCCoding: WireMVCCoding { WireMVCCoding(json: .init(sortsKeys: true)) }
+extension WireMVCCoding {
+    static let app = BindingKey<WireMVCCoding>()
 }
+
+@Provides(WireMVCCoding.app)
+let appCoding = WireMVCCoding(json: .init(sortsKeys: true))
 
 @Singleton
 @WireMVCBootstrap
-@Coding(AppCoding.self)
+@Coding(WireMVCCoding.app)
 struct AppBootstrap {
     @Inject let config: ServerConfig
 
