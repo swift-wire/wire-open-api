@@ -40,7 +40,11 @@ var localSpecPath: String?
 var moduleSpecPaths: [String: String] = [:]
 /// The generator config beside each document, keyed the same way — `""` for this target's own.
 var specConfigPaths: [String: String] = [:]
-var sourcePaths: [String] = []
+/// Sources grouped by the module that declares them, in the order the plugin passes them — this target
+/// first, then each Wire-aware dependency. The grouping is what lets a bare `@OpenAPIController` mean
+/// *the document beside this controller* rather than the document of whichever target happens to be
+/// compiling it.
+var sourceGroups: [(module: String, paths: [String])] = []
 var index = 0
 while index < arguments.count {
     switch arguments[index] {
@@ -60,28 +64,42 @@ while index < arguments.count {
         index += 1
         if index < arguments.count { imports.append(arguments[index]) }
     case "--module":
-        index += 1  // the module name itself is not needed: the emitted extension is module-local
+        index += 1
+        if index < arguments.count { sourceGroups.append((arguments[index], [])) }
     default:
-        sourcePaths.append(arguments[index])
+        // Sources follow the `--module` that names their module; anything before the first one would be
+        // a caller error, and is attributed to no module rather than silently to this target.
+        if sourceGroups.isEmpty { sourceGroups.append(("", [])) }
+        sourceGroups[sourceGroups.count - 1].paths.append(arguments[index])
     }
     index += 1
 }
 
-let discovered = discoverControllers(in: sourcePaths)
+let discovered = discoverControllers(in: sourceGroups)
+/// The module being compiled — the first group the plugin passes. A controller declared here uses this
+/// target's own document; one declared in a dependency uses that dependency's.
+let localModule = sourceGroups.first?.module ?? ""
 
 // MARK: - grouping
 
 /// The proxy type swift-wire synthesises for a group — `_WireOpenAPIContributor` for the default group,
 /// `_WireOpenAPIContributor_<Spec>` otherwise. Must match `aggregateProxyTypeName` in WireGenCore.
-func proxyTypeName(for spec: String?) -> String {
-    guard let spec, !spec.isEmpty else { return "_WireOpenAPIContributor" }
-    let sanitised = String(spec.map { $0.isLetter || $0.isNumber ? $0 : "_" })
+func proxyTypeName(for group: String) -> String {
+    let sanitised = String(group.map { $0.isLetter || $0.isNumber ? $0 : "_" })
     return "_WireOpenAPIContributor_\(sanitised)"
 }
 
+// The group a controller belongs to — always a module name. An explicit `spec:` names it outright;
+// without one it is the controller's **home module**, the document sitting beside it.
+//
+// Resolving a bare annotation against the compiling target instead would make it mean something the
+// author cannot see from the file they are reading: the answer would depend on which executable pulled
+// the library in, and two libraries each shipping their own bare-annotated controllers would collide on
+// one group. swift-wire's aggregate-proxy synthesis resolves identically, so the two agree on the proxy
+// type without either needing to know which module is consuming.
 var byGroup: [String: [DiscoveredController]] = [:]
 for controller in discovered {
-    byGroup[controller.spec ?? "", default: []].append(controller)
+    byGroup[controller.spec ?? controller.homeModule, default: []].append(controller)
 }
 
 // MARK: - emission
@@ -129,7 +147,8 @@ for (spec, controllers) in byGroup.sorted(by: { $0.key < $1.key }) where !contro
     let specModule: String?
     let specPath: String?
     /// Loaded once per group: everything the codegen asks of the document goes through it.
-    if spec.isEmpty {
+    if spec == localModule {
+        // This target's own document. Its generated types are local, so nothing needs qualifying.
         specModule = nil
         specPath = localSpecPath
     } else if let path = moduleSpecPaths[spec] {
@@ -142,28 +161,36 @@ for (spec, controllers) in byGroup.sorted(by: { $0.key < $1.key }) where !contro
             ? "This target depends on no module carrying an OpenAPI document."
             : "Modules carrying one: \(known.joined(separator: ", "))."
         let location = controllers[0]
-        FileHandle.standardError.write(
-            Data(
-                """
-                \(location.file):\(location.line): error: @OpenAPIController(spec: "\(spec)") names the \
-                module owning the generated APIProtocol, and no dependency of this target is called \
-                '\(spec)'. \(available) For a document generated into this target, use the bare \
-                @OpenAPIController().
-
-                """.utf8
-            )
-        )
+        // Two ways to arrive here, and they need different advice. An explicit `spec:` naming nothing is a
+        // typo or a missing dependency. A *bare* controller whose own module carries no document is the
+        // other case entirely — the author wrote no module name, so quoting one back at them would be
+        // baffling; what they need to know is that the bare form looks beside the controller.
+        let message =
+            controllers[0].spec == nil
+            ? """
+            \(location.file):\(location.line): error: '\(location.typeName)' is declared in module \
+            '\(spec)', which carries no OpenAPI document — a bare @OpenAPIController implements the \
+            document beside it. Put the document in '\(spec)', or name the module that owns the \
+            generated APIProtocol with @OpenAPIController(spec: "..."). \(available)
+            """
+            : """
+            \(location.file):\(location.line): error: @OpenAPIController(spec: "\(spec)") names the \
+            module owning the generated APIProtocol, and no dependency of this target is called \
+            '\(spec)'. \(available) For the document beside this controller, use the bare \
+            @OpenAPIController().
+            """
+        FileHandle.standardError.write(Data((message + "\n").utf8))
         exit(1)
     }
     let document = specPath.flatMap(loadDocument(at:))
     DirectDispatchEmitter(
         spec: spec,
-        proxy: proxyTypeName(for: spec.isEmpty ? nil : spec),
+        proxy: proxyTypeName(for: spec),
         controllers: controllers,
         specModule: specModule,
         operationRoutes: document?.operationRoutes ?? [:],
         serverPrefix: resolveServerPrefix(document: document, path: specPath ?? ""),
-        namingStrategy: resolveNamingStrategy(configPath: specConfigPaths[spec]),
+        namingStrategy: resolveNamingStrategy(configPath: specConfigPaths[spec == localModule ? "" : spec]),
         foldEntries: foldEntries
     ).emit(into: &lines)
 }

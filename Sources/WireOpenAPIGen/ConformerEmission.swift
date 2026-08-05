@@ -18,12 +18,13 @@ extension DirectDispatchEmitter {
         let forwarders = controllers.flatMap { controller in
             controller.operations.map { forwarder(controller, $0) }
         }
-        let fields = controllers.map { controller in
-            "    let \(conformerField(controller)): \(controller.typeName)"
+        let fields = controllers.enumerated().map { index, controller in
+            "    let \(conformerField(controller)): \(controller.subjectType(prefix: DiscoveredController.genericPrefix(index)))"
                 + (controller.seed != nil ? "?" : "")
         }
+        rejectGenericWhereClauses()
         let body = """
-            struct Conformer: APIProtocol {
+            struct Conformer\(conformerGenericClause): APIProtocol {
             \(fields.joined(separator: "\n"))
 
             \(forwarders.joined(separator: "\n\n"))
@@ -38,9 +39,10 @@ extension DirectDispatchEmitter {
             : ["APIProtocol", "Components", "Operations", "Servers"]
                 .map { "    typealias \($0) = \(qualified($0))\n" }
                 .joined() + "\n"
+        let noSubject = noSubjectHelper
         return """
             enum \(namespace) {
-            \(aliases)\(indented(body))
+            \(aliases)\(indented(body))\(indented(noSubject))
             }
             """
     }
@@ -361,7 +363,15 @@ extension DirectDispatchEmitter {
             } else if controller.typeName == binding?.typeName {
                 value = "wireOpenAPISubject"
             } else {
-                value = "nil"
+                // A *typed* nil. The conformer is generic over each controller's parameters, so a bare
+                // `nil` leaves a request-scoped controller's parameter uninferable at the template site —
+                // the proxy holds no subject for it, only a scope-entry thunk. That thunk's return type
+                // names the concrete subject, so passing it to `noSubject` recovers the type without this
+                // emitter ever having to spell the proxy's generic parameter names.
+                value =
+                    controller.genericParameters.isEmpty
+                    ? "nil"
+                    : "\(namespace).noSubject(self.\(proxyScopeEntry(controller)))"
             }
             return "\(indent)    \(conformerField(controller)): \(value)"
         }
