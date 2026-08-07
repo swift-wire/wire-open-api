@@ -81,6 +81,14 @@ jobs:
           openapi=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/api/v1/tasks/42)
           # The annotation-driven route, from the same router.
           mvc=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/status/tasks)
+          # A *global* @Middleware contributes `x-served-by`. It has to appear on both kinds of route:
+          # an @Operation builds its own head inside WireOpenAPIRoutes.invoke, so it picks contributions
+          # up through a wrapping sender rather than the drain a @Get route's terminal does. Asserting
+          # only one kind would let the other regress silently, which is exactly how this was missed.
+          openapiServedBy=$(curl -s -D - -o /dev/null http://127.0.0.1:8080/api/v1/tasks/42 \
+            | tr -d '\r' | awk 'tolower($1)=="x-served-by:"{print $2}')
+          mvcServedBy=$(curl -s -D - -o /dev/null http://127.0.0.1:8080/status/tasks \
+            | tr -d '\r' | awk 'tolower($1)=="x-served-by:"{print $2}')
           # An unmatched path reaches the @NotFound fallback, which proves the operations are *inside*
           # the router rather than mounted beside it.
           notfound=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/nope)
@@ -169,6 +177,10 @@ jobs:
             *) echo "the OpenAPI operation did not serve"; exit 1;;
           esac
           case "$mvc" in *'"count":3'*"[200]") ;; *) echo "the WireMVC route did not serve"; exit 1;; esac
+          [ "$openapiServedBy" = wire-open-api ] || {
+            echo "a global @Middleware's header did not reach the OpenAPI operation"; exit 1; }
+          [ "$mvcServedBy" = wire-open-api ] || {
+            echo "a global @Middleware's header did not reach the WireMVC route"; exit 1; }
           case "$notfound" in *"no route here"*"[404]") ;; *) echo "@NotFound did not fire"; exit 1;; esac
           [ "$unprefixed" = 404 ] || { echo "operation registered without its server prefix"; exit 1; }
           # Served by the *other* controller of the same spec, from the shared app-scoped TaskStore.

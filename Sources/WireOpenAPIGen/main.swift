@@ -132,7 +132,8 @@ func foldEntries(_ arguments: [String], indent: String) -> [String] {
             return indent + "self.\(dependencyPropertyName(forType: String(argument.dropLast(5))))"
         }
         return indent + "self._wireFactory_\(sanitizedKeyFragment(argument))"
-            + ".create(Builder.RequestContext.self, Builder.Reader.self, Builder.ResponseSender.self)"
+            // Over the *unwrapped* context: the route's box is built after the courier is dropped.
+            + ".create(Builder.RequestContext.Base.self, Builder.Reader.self, Builder.ResponseSender.self)"
     }
 }
 
