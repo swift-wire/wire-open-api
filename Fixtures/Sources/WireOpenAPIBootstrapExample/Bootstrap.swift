@@ -46,6 +46,7 @@ let epochCoding = WireMVCCoding(dates: EpochSeconds(), json: .init(sortsKeys: tr
 
 @Singleton
 @WireMVCBootstrap
+@Middleware(ServedByKeys.factory)  // global: must reach an @Operation's response, not only a @Get route's
 @Coding(WireMVCCoding.self)
 struct AppBootstrap {
     @Inject let config: ServerConfig

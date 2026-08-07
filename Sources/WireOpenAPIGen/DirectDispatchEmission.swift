@@ -134,7 +134,8 @@ struct DirectDispatchEmitter {
             \(indent)    }
             \(indent)try await WireOpenAPIRoutes.invoke(
             \(indent)    handler: wireOpenAPIHandler, request: request, pathParameters: parameters,
-            \(indent)    reader: reader, sender: sender\(rejection.isEmpty ? "" : ",")
+            \(indent)    reader: reader,
+            \(indent)    sender: ResponseHeaderApplyingSender(wrapping: sender, registry: wireOpenAPIRegistry)\(rejection.isEmpty ? "" : ",")
             \(rejection)\(indent))
             """
         // This operation's controller is app-scoped: nothing about its dispatch varies per request, so the
@@ -192,7 +193,8 @@ struct DirectDispatchEmitter {
             """
         guard !entries.isEmpty else {
             return """
-                \(register) { request, _, parameters, reader, sender in
+                \(register) { request, requestContext, parameters, reader, sender in
+                \(indent)    let wireOpenAPIRegistry = requestContext.responseHeaders
                 \(terminal(controller, operation, indent: indent + "    "))
                 \(indent)}
                 """
@@ -200,9 +202,10 @@ struct DirectDispatchEmitter {
         return """
             \(register) {
             \(indent)    request, requestContext, parameters, reader, responseSender in
+            \(indent)    let wireOpenAPIRegistry = requestContext.responseHeaders
             \(indent)    let wireOpenAPIBox = RequestResponseMiddlewareBox.pending(
-            \(indent)        request: request, requestContext: requestContext, reader: reader,
-            \(indent)        responseSender: responseSender
+            \(indent)        request: request, requestContext: requestContext.takeBase(), reader: reader,
+            \(indent)        responseSender: responseSender, responseHeaders: wireOpenAPIRegistry
             \(indent)    )
             \(indent)    let wireOpenAPIChain = wireCompose {
             \(entries.joined(separator: "\n"))
@@ -238,7 +241,7 @@ struct DirectDispatchEmitter {
                     coding wireMVCAppCoding: WireMVCCoding
                 ) throws
                 where
-                    Builder.RequestContext: ~Copyable & SendableMetatype,
+                    Builder.RequestContext: ~Copyable & SendableMetatype & ResponseHeaderCarrying,
                     Builder.Reader: ~Copyable,
                     Builder.ResponseSender: ~Copyable,
                     Builder.ResponseSender.Writer: ~Copyable
