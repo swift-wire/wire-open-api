@@ -13,30 +13,56 @@ on:
 # pre-release tags; the branch pin also overrides swift-wire's transitive 603 requirement).
 jobs:
   BuildAndTest:
-    name: Swift 6.4 nightly
+    name: Swift 6.4 (pinned)
     runs-on: ubuntu-24.04
-    container: swiftlang/swift:nightly-6.4.x-noble
     steps:
       - uses: actions/checkout@v6
-      - name: Install dependencies
-        run: apt-get update && apt-get install -y libssl-dev curl
+      - name: Read the pinned toolchain
+        # `.swift-version` is the single source of truth: local `swiftly` and CI resolve the same snapshot.
+        # Bump the file, not the workflow.
+        run: echo "SWIFT_SNAPSHOT=$(cat .swift-version)" >> "$GITHUB_ENV"
+      - name: Install system dependencies
+        # libcurl4-openssl-dev is required by the toolchain itself (Foundation networking on Linux) and must
+        # precede the install, or Swiftly's post-install check fails.
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libsqlite3-dev libcurl4-openssl-dev curl
+      - name: Install Swiftly + the pinned toolchain
+        run: |
+          curl -L "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz" | tar zxf -
+          ./swiftly init --assume-yes --skip-install
+          echo "$HOME/.local/share/swiftly/bin" >> "$GITHUB_PATH"
+          # No `--use`: every command runs through `swiftly run`, which reads `.swift-version` itself.
+          # `--use` would rewrite that file (dropping its trailing newline) and dirty the tree, which the
+          # swift-format job's `git diff --exit-code` guard then fails on.
+          "$HOME/.local/share/swiftly/bin/swiftly" install "$SWIFT_SNAPSHOT" --assume-yes
       - name: Build
-        run: swift build
+        run: swiftly run swift build
       - name: Test
-        run: swift test
+        run: swiftly run swift test
   Fixtures:
     name: Fixtures — serve and probe
     runs-on: ubuntu-24.04
-    container: swiftlang/swift:nightly-6.4.x-noble
     steps:
       - uses: actions/checkout@v6
-      - name: Install dependencies
-        # curl: the fixture's generated @main serves indefinitely, so it is probed rather than run to
-        # completion.
-        run: apt-get update && apt-get install -y libssl-dev curl
+      - name: Read the pinned toolchain
+        # `.swift-version` is the single source of truth: local `swiftly` and CI resolve the same snapshot.
+        # Bump the file, not the workflow.
+        run: echo "SWIFT_SNAPSHOT=$(cat .swift-version)" >> "$GITHUB_ENV"
+      - name: Install system dependencies
+        # libcurl4-openssl-dev is required by the toolchain itself (Foundation networking on Linux) and must
+        # precede the install, or Swiftly's post-install check fails.
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libsqlite3-dev libcurl4-openssl-dev curl
+      - name: Install Swiftly + the pinned toolchain
+        run: |
+          curl -L "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz" | tar zxf -
+          ./swiftly init --assume-yes --skip-install
+          echo "$HOME/.local/share/swiftly/bin" >> "$GITHUB_PATH"
+          # No `--use`: every command runs through `swiftly run`, which reads `.swift-version` itself.
+          # `--use` would rewrite that file (dropping its trailing newline) and dirty the tree, which the
+          # swift-format job's `git diff --exit-code` guard then fails on.
+          "$HOME/.local/share/swiftly/bin/swiftly" install "$SWIFT_SNAPSHOT" --assume-yes
       - name: Build
         working-directory: Fixtures
-        run: swift build
+        run: swiftly run swift build
       - name: Check the naming golden table against the real generator
         # Sources/WireOpenAPINaming transcribes swift-openapi-generator's internal SafeNameGenerator,
         # which the typed shim needs to name generated symbols. A copy does not fail when it is wrong
@@ -47,7 +73,7 @@ jobs:
         # It runs in this job because this is where swift-openapi-generator is already resolved.
         env:
           OPENAPI_GENERATOR_PATH: ${{ github.workspace }}/Fixtures/.build/checkouts/swift-openapi-generator
-        run: swift run NamingGoldenTool --check
+        run: swiftly run swift run NamingGoldenTool --check
 
       - name: Serve an OpenAPI operation and a @Get route from one router
         working-directory: Fixtures
@@ -344,13 +370,29 @@ jobs:
   SwiftFormat:
     name: swift-format (6.4 toolchain)
     runs-on: ubuntu-24.04
-    container: swiftlang/swift:nightly-6.4.x-noble
     steps:
       - uses: actions/checkout@v6
+      - name: Read the pinned toolchain
+        # `.swift-version` is the single source of truth: local `swiftly` and CI resolve the same snapshot.
+        # Bump the file, not the workflow.
+        run: echo "SWIFT_SNAPSHOT=$(cat .swift-version)" >> "$GITHUB_ENV"
+      - name: Install system dependencies
+        # libcurl4-openssl-dev is required by the toolchain itself (Foundation networking on Linux) and must
+        # precede the install, or Swiftly's post-install check fails.
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libsqlite3-dev libcurl4-openssl-dev curl
+      - name: Install Swiftly + the pinned toolchain
+        run: |
+          curl -L "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz" | tar zxf -
+          ./swiftly init --assume-yes --skip-install
+          echo "$HOME/.local/share/swiftly/bin" >> "$GITHUB_PATH"
+          # No `--use`: every command runs through `swiftly run`, which reads `.swift-version` itself.
+          # `--use` would rewrite that file (dropping its trailing newline) and dirty the tree, which the
+          # swift-format job's `git diff --exit-code` guard then fails on.
+          "$HOME/.local/share/swiftly/bin/swiftly" install "$SWIFT_SNAPSHOT" --assume-yes
       - name: Run swift-format
         # From the 6.4 toolchain so it parses the proposal's ~Copyable / consuming sending syntax that
         # WireOpenAPIMVC's bridge carries (a released swift-format can't).
-        run: swift-format format --recursive --in-place .
+        run: swiftly run swift-format format --recursive --in-place .
       - name: Check for formatting differences
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
