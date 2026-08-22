@@ -230,8 +230,10 @@ extension OpenAPIKit.OpenAPI.Document {
         switch resolved.value {
         case .string(let core, let context):
             let keywords =
-                [context.minLength > 0 ? "minLength" : nil, context.maxLength.map { _ in "maxLength" },
-                 context.pattern.map { _ in "pattern" }].compactMap { $0 }
+                [
+                    context.minLength > 0 ? "minLength" : nil, context.maxLength.map { _ in "maxLength" },
+                    context.pattern.map { _ in "pattern" },
+                ].compactMap { $0 }
             guard !keywords.isEmpty else { return .none }
             // `format: date-time` is emitted as a `Foundation.Date`, so a string assertion has nothing to
             // measure — the value is no longer a string by the time the handler could see it. Every other

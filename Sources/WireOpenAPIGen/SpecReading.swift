@@ -99,7 +99,11 @@ indirect enum SpecAssertions {
     case string(minLength: Int?, maxLength: Int?, pattern: String?)
     case integer(minimum: Int?, exclusiveMinimum: Bool, maximum: Int?, exclusiveMaximum: Bool, multipleOf: Int?)
     case number(
-        minimum: Double?, exclusiveMinimum: Bool, maximum: Double?, exclusiveMaximum: Bool, multipleOf: Double?
+        minimum: Double?,
+        exclusiveMinimum: Bool,
+        maximum: Double?,
+        exclusiveMaximum: Bool,
+        multipleOf: Double?
     )
     case array(minItems: Int?, maxItems: Int?, uniqueItems: Bool, items: SpecAssertions)
     /// Assertions the document makes that this adapter cannot apply, carried so the *diagnostic* can name

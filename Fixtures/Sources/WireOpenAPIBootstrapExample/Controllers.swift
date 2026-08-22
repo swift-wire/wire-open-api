@@ -77,9 +77,7 @@ struct TaskController<Store: TaskStoring> {
     /// receives too, so it is not a typed-shim concern — and an author who took the raw escape hatch for
     /// the *response* shape still gets their document's assertions enforced.
     ///
-    /// The throw is the **generated validator's**, from the `pattern` the document puts on `id`. Slice 1
-    /// proved this path with a hand-written throw; slice 2 replaced it with the real thing, and the
-    /// observable behaviour is identical — which is the point.
+    /// The throw is the **generated validator's**, from the `pattern` the document puts on `id`.
     @RawOperation
     @ErrorResponse(
         WireOpenAPIRequestValidationError.self,

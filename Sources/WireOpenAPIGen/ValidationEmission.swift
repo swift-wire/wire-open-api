@@ -122,19 +122,30 @@ extension DirectDispatchEmitter {
             if let minLength { arguments.append("minLength: \(minLength)") }
             if let maxLength { arguments.append("maxLength: \(maxLength)") }
             if let pattern {
-                let index = patterns.firstIndex(of: pattern) ?? { patterns.append(pattern); return patterns.count - 1 }()
+                let index =
+                    patterns.firstIndex(of: pattern)
+                    ?? {
+                        patterns.append(pattern)
+                        return patterns.count - 1
+                    }()
                 arguments.append("pattern: _p\(index)")
             }
             return call("string", value: value, path: path, place: place, arguments: arguments, indent: indent)
         case .integer(let minimum, let exclusiveMinimum, let maximum, let exclusiveMaximum, let multipleOf):
             return call(
-                "integer", value: value, path: path, place: place,
+                "integer",
+                value: value,
+                path: path,
+                place: place,
                 arguments: boundArguments(minimum, exclusiveMinimum, maximum, exclusiveMaximum, multipleOf),
                 indent: indent
             )
         case .number(let minimum, let exclusiveMinimum, let maximum, let exclusiveMaximum, let multipleOf):
             return call(
-                "number", value: value, path: path, place: place,
+                "number",
+                value: value,
+                path: path,
+                place: place,
                 arguments: boundArguments(minimum, exclusiveMinimum, maximum, exclusiveMaximum, multipleOf),
                 indent: indent
             )
@@ -145,16 +156,22 @@ extension DirectDispatchEmitter {
             if uniqueItems { arguments.append("uniqueItems: true") }
             // The element closure carries its own accumulator parameter rather than capturing the outer
             // one: the outer is `inout`, and a closure cannot capture that.
-            let elementCheck = items.isEmpty
+            let elementCheck =
+                items.isEmpty
                 ? nil
                 : check(
-                    value: "wireOpenAPIItem", path: "\\(wireOpenAPIItemPath)", location: location,
-                    assertions: items, indent: indent + "        ", patterns: &patterns
+                    value: "wireOpenAPIItem",
+                    path: "\\(wireOpenAPIItemPath)",
+                    location: location,
+                    assertions: items,
+                    indent: indent + "        ",
+                    patterns: &patterns
                 )
             guard let elementCheck, !elementCheck.isEmpty else {
                 return call("array", value: value, path: path, place: place, arguments: arguments, indent: indent)
             }
-            let body = elementCheck
+            let body =
+                elementCheck
                 .replacingOccurrences(of: "into: &wireOpenAPIFailures", with: "into: &wireOpenAPIItemFailures")
                 .replacingOccurrences(of: "at: \"\\(wireOpenAPIItemPath)\"", with: "at: wireOpenAPIItemPath")
             return """

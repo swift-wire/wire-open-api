@@ -46,14 +46,22 @@ struct ValidationChecksTests {
         // Unanchored: `[0-9]+` is satisfied by a digit anywhere, not only by an all-digit string.
         let unanchored = collect {
             WireOpenAPIValidate.string(
-                "abc123", at: "query.q", in: .query, pattern: WireOpenAPIPattern("[0-9]+"), into: &$0
+                "abc123",
+                at: "query.q",
+                in: .query,
+                pattern: WireOpenAPIPattern("[0-9]+"),
+                into: &$0
             )
         }
         #expect(unanchored.isEmpty)
         // A pattern that anchors itself still anchors.
         let anchored = collect {
             WireOpenAPIValidate.string(
-                "abc123", at: "query.q", in: .query, pattern: WireOpenAPIPattern("^[0-9]+$"), into: &$0
+                "abc123",
+                at: "query.q",
+                in: .query,
+                pattern: WireOpenAPIPattern("^[0-9]+$"),
+                into: &$0
             )
         }
         #expect(anchored.map(\.keyword) == ["pattern"])
@@ -69,7 +77,12 @@ struct ValidationChecksTests {
         #expect(inclusive.isEmpty)
         let exclusive = collect {
             WireOpenAPIValidate.integer(
-                0, at: "q.n", in: .query, minimum: 0, exclusiveMinimum: true, into: &$0
+                0,
+                at: "q.n",
+                in: .query,
+                minimum: 0,
+                exclusiveMinimum: true,
+                into: &$0
             )
         }
         #expect(exclusive.map(\.keyword) == ["exclusiveMinimum"])
@@ -113,7 +126,11 @@ struct ValidationChecksTests {
     func uniqueItems() {
         let failures = collect {
             WireOpenAPIValidate.array(
-                ["a", "b", "a"], at: "query.tags", in: .query, uniqueItems: true, into: &$0
+                ["a", "b", "a"],
+                at: "query.tags",
+                in: .query,
+                uniqueItems: true,
+                into: &$0
             )
         }
         #expect(failures.map(\.keyword) == ["uniqueItems"])
@@ -125,7 +142,10 @@ struct ValidationChecksTests {
     func elementPathsAreIndexed() {
         let failures = collect { accumulator in
             WireOpenAPIValidate.array(
-                ["ok", "x", "fine"], at: "query.tags", in: .query, into: &accumulator,
+                ["ok", "x", "fine"],
+                at: "query.tags",
+                in: .query,
+                into: &accumulator,
                 element: { item, path, failures in
                     WireOpenAPIValidate.string(item, at: path, in: .query, minLength: 2, into: &failures)
                 }
@@ -139,7 +159,11 @@ struct ValidationChecksTests {
     func severalAtOnce() {
         let failures = collect {
             WireOpenAPIValidate.string(
-                "X", at: "query.q", in: .query, minLength: 3, pattern: WireOpenAPIPattern("^[a-z]+$"),
+                "X",
+                at: "query.q",
+                in: .query,
+                minLength: 3,
+                pattern: WireOpenAPIPattern("^[a-z]+$"),
                 into: &$0
             )
         }

@@ -168,7 +168,6 @@ func parameterDocument(_ schema: String) -> String {
     """
 }
 
-
 struct Gate {
     let name: String
     /// Why this case exists, carried into the golden so a reader of the table knows what it protects.

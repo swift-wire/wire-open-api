@@ -53,19 +53,28 @@ public enum WireOpenAPIValidate {
         let length = value.unicodeScalars.count
         if let minLength, length < minLength {
             failures.record(
-                path: path, keyword: "minLength", expected: "\(minLength)", actual: "\(length)",
+                path: path,
+                keyword: "minLength",
+                expected: "\(minLength)",
+                actual: "\(length)",
                 location: location
             )
         }
         if let maxLength, length > maxLength {
             failures.record(
-                path: path, keyword: "maxLength", expected: "\(maxLength)", actual: "\(length)",
+                path: path,
+                keyword: "maxLength",
+                expected: "\(maxLength)",
+                actual: "\(length)",
                 location: location
             )
         }
         if let pattern, !pattern.matches(value) {
             failures.record(
-                path: path, keyword: "pattern", expected: pattern.source, actual: value,
+                path: path,
+                keyword: "pattern",
+                expected: pattern.source,
+                actual: value,
                 location: location
             )
         }
@@ -94,21 +103,30 @@ public enum WireOpenAPIValidate {
         let value = Int64(raw)
         if let minimum, exclusiveMinimum ? value <= Int64(minimum) : value < Int64(minimum) {
             failures.record(
-                path: path, keyword: exclusiveMinimum ? "exclusiveMinimum" : "minimum",
-                expected: "\(minimum)", actual: "\(value)", location: location
+                path: path,
+                keyword: exclusiveMinimum ? "exclusiveMinimum" : "minimum",
+                expected: "\(minimum)",
+                actual: "\(value)",
+                location: location
             )
         }
         if let maximum, exclusiveMaximum ? value >= Int64(maximum) : value > Int64(maximum) {
             failures.record(
-                path: path, keyword: exclusiveMaximum ? "exclusiveMaximum" : "maximum",
-                expected: "\(maximum)", actual: "\(value)", location: location
+                path: path,
+                keyword: exclusiveMaximum ? "exclusiveMaximum" : "maximum",
+                expected: "\(maximum)",
+                actual: "\(value)",
+                location: location
             )
         }
         // Exact, because OpenAPIKit gives an integer schema an `Int` `multipleOf`. The tolerance question
         // below belongs only to `type: number`.
         if let multipleOf, multipleOf != 0, value % Int64(multipleOf) != 0 {
             failures.record(
-                path: path, keyword: "multipleOf", expected: "\(multipleOf)", actual: "\(value)",
+                path: path,
+                keyword: "multipleOf",
+                expected: "\(multipleOf)",
+                actual: "\(value)",
                 location: location
             )
         }
@@ -133,14 +151,20 @@ public enum WireOpenAPIValidate {
         let value = Double(raw)
         if let minimum, exclusiveMinimum ? value <= minimum : value < minimum {
             failures.record(
-                path: path, keyword: exclusiveMinimum ? "exclusiveMinimum" : "minimum",
-                expected: "\(minimum)", actual: "\(value)", location: location
+                path: path,
+                keyword: exclusiveMinimum ? "exclusiveMinimum" : "minimum",
+                expected: "\(minimum)",
+                actual: "\(value)",
+                location: location
             )
         }
         if let maximum, exclusiveMaximum ? value >= maximum : value > maximum {
             failures.record(
-                path: path, keyword: exclusiveMaximum ? "exclusiveMaximum" : "maximum",
-                expected: "\(maximum)", actual: "\(value)", location: location
+                path: path,
+                keyword: exclusiveMaximum ? "exclusiveMaximum" : "maximum",
+                expected: "\(maximum)",
+                actual: "\(value)",
+                location: location
             )
         }
         guard let multipleOf, multipleOf != 0 else { return }
@@ -152,7 +176,10 @@ public enum WireOpenAPIValidate {
         let tolerance = abs(multipleOf) * 1e-9
         if remainder > tolerance, abs(remainder - abs(multipleOf)) > tolerance {
             failures.record(
-                path: path, keyword: "multipleOf", expected: "\(multipleOf)", actual: "\(value)",
+                path: path,
+                keyword: "multipleOf",
+                expected: "\(multipleOf)",
+                actual: "\(value)",
                 location: location
             )
         }
@@ -179,13 +206,19 @@ public enum WireOpenAPIValidate {
         guard let value, !failures.isFull else { return }
         if let minItems, value.count < minItems {
             failures.record(
-                path: path, keyword: "minItems", expected: "\(minItems)", actual: "\(value.count)",
+                path: path,
+                keyword: "minItems",
+                expected: "\(minItems)",
+                actual: "\(value.count)",
                 location: location
             )
         }
         if let maxItems, value.count > maxItems {
             failures.record(
-                path: path, keyword: "maxItems", expected: "\(maxItems)", actual: "\(value.count)",
+                path: path,
+                keyword: "maxItems",
+                expected: "\(maxItems)",
+                actual: "\(value.count)",
                 location: location
             )
         }
@@ -193,8 +226,11 @@ public enum WireOpenAPIValidate {
         // this is a real check rather than one the type system already made.
         if uniqueItems, Set(value).count != value.count {
             failures.record(
-                path: path, keyword: "uniqueItems", expected: "true",
-                actual: "\(value.count) items, \(Set(value).count) distinct", location: location
+                path: path,
+                keyword: "uniqueItems",
+                expected: "true",
+                actual: "\(value.count) items, \(Set(value).count) distinct",
+                location: location
             )
         }
         for (index, item) in value.enumerated() {
