@@ -74,8 +74,45 @@ let generatorBinary: URL = {
             """
         )
     }
+    warnIfStale(found)
     return found
 }()
+
+/// Refuse a binary older than the code it is meant to be testing.
+///
+/// The tool *locates* WireOpenAPIGen rather than building it (see above), which means an edit to a
+/// diagnostic followed by `swift run DiagnosticGoldenTool` silently tests the previous build — and
+/// happily writes a golden recording the old messages as if they were current. That is a worse failure
+/// than a stale build, because the table is then wrong *and* self-consistent. Caught twice while writing
+/// slice 3, which is twice more than it should catch anyone else.
+///
+/// Conservative by design: it compares modification times, so touching a source without changing it
+/// trips it even though SwiftPM correctly skipped the relink. Erring toward "build it again" is the right
+/// side to err on, since the message says exactly what to run.
+func warnIfStale(_ binary: URL) {
+    let sources = repoRoot.appendingPathComponent("Sources/WireOpenAPIGen")
+    guard
+        let built = try? binary.resourceValues(forKeys: [.contentModificationDateKey])
+            .contentModificationDate,
+        let walker = FileManager.default.enumerator(atPath: sources.path)
+    else { return }
+    let newest = walker.compactMap { entry -> Date? in
+        guard let name = entry as? String, name.hasSuffix(".swift") else { return nil }
+        return try? sources.appendingPathComponent(name)
+            .resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+    }
+    .max()
+    guard let newest, newest > built else { return }
+    fail(
+        """
+        \(binary.path)
+        is older than Sources/WireOpenAPIGen, so this would test the previous build and write a golden
+        that records it. Build it first:
+
+            swift build --product WireOpenAPIGen
+        """
+    )
+}
 
 // MARK: - the corpus
 
