@@ -167,7 +167,24 @@ extension OpenAPIKit.OpenAPI.Document {
                     )
                     return SpecRequestBody(
                         isRequired: body.required,
-                        contentTypes: body.content.keys.map(\.rawValue).sorted()
+                        contentTypes: body.content.keys.map(\.rawValue).sorted(),
+                        // Only the JSON content, and resolved like every other reference here: it is the
+                        // one content type whose value the generator gives a schema-derived Swift type,
+                        // so it is the only one a validator can walk.
+                        assertions: assertions(
+                            of: body.content
+                                .first(where: { $0.key.rawValue == "application/json" })
+                                .map {
+                                    resolve(
+                                        $0.value,
+                                        "a JSON content reference in '\(operationID)'",
+                                        at: documentPath
+                                    )
+                                }?
+                                .schema,
+                            at: documentPath,
+                            describing: "the request body of '\(operationID)'"
+                        )
                     )
                 }
                 found[operationID] = OperationRoute(
@@ -215,13 +232,19 @@ extension OpenAPIKit.OpenAPI.Document {
         describing subject: String
     ) -> SpecAssertions {
         guard let schema else { return .none }
-        let resolved: OpenAPIKit.JSONSchema
-        do { resolved = try components.lookup(schema) } catch {
-            diagnoseDocument(
-                documentPath,
-                "has a schema reference for \(subject) that could not be resolved: \(error)"
-            )
+        // A `$ref` is kept as a **name**, not followed. That is what makes the walk terminate on a
+        // recursive schema and what keeps emission linear in the document: the reference becomes a call
+        // to the named schema's own validator, emitted once however many places reach it.
+        if case .reference(let reference, _) = schema.value {
+            guard let name = reference.name else {
+                diagnoseDocument(
+                    documentPath,
+                    "has a schema reference for \(subject) this adapter cannot name: \(reference)"
+                )
+            }
+            return .reference(name)
         }
+        let resolved = schema
         // An `enum` is emitted by the generator as a Swift enum, so the member's type is not the scalar
         // any more and no check of ours would compile against it — nor is one needed, since the enum is
         // a stronger constraint than anything alongside it.
@@ -231,8 +254,8 @@ extension OpenAPIKit.OpenAPI.Document {
         case .string(let core, let context):
             let keywords =
                 [
-                    context.minLength > 0 ? "minLength" : nil, context.maxLength.map { _ in "maxLength" },
-                    context.pattern.map { _ in "pattern" },
+                    context.minLength > 0 ? "`minLength`" : nil, context.maxLength.map { _ in "`maxLength`" },
+                    context.pattern.map { _ in "`pattern`" },
                 ].compactMap { $0 }
             guard !keywords.isEmpty else { return .none }
             // `format: date-time` is emitted as a `Foundation.Date`, so a string assertion has nothing to
@@ -278,8 +301,86 @@ extension OpenAPIKit.OpenAPI.Document {
                 uniqueItems: context.uniqueItems,
                 items: assertions(of: context.items, at: documentPath, describing: "items of \(subject)")
             )
+        case .object(_, let context):
+            // `additionalProperties: false` is deliberately *not* read: the generator already enforces it,
+            // in a custom `init(from:)` calling `ensureNoAdditionalProperties`. Emitting a check would
+            // duplicate one that has already run — and could not run anyway, since the unknown keys are
+            // gone by the time a validator sees the value.
+            // `minProperties` is **computed**, not read: OpenAPIKit returns
+            // `max(explicit, requiredProperties.count)`, so every object with a required property reports
+            // one whether the document wrote it or not. Comparing against that count recovers the
+            // author's intent — and is right on its own terms, because a bound at or below the number of
+            // required properties is already enforced by `required`, which the generator implements by
+            // making those members non-optional. Only a bound *above* it says anything new.
+            let counts = [
+                context.minProperties > context.requiredProperties.count ? "`minProperties`" : nil,
+                context.maxProperties.map { _ in "`maxProperties`" },
+            ].compactMap { $0 }
+            if !counts.isEmpty {
+                return .unrepresentable(
+                    keywords: counts,
+                    reason: "a generated struct has a fixed set of members and no runtime property count"
+                )
+            }
+            return .object(
+                properties: context.properties.map { name, property in
+                    SpecProperty(
+                        name: name,
+                        isRequired: context.requiredProperties.contains(name),
+                        assertions: assertions(
+                            of: property, at: documentPath, describing: "'\(name)' of \(subject)"
+                        )
+                    )
+                }
+            )
+        case .all(let subschemas, _):
+            return .composed(
+                members: subschemas.enumerated().map { index, subschema in
+                    SpecComposedMember(
+                        index: index + 1,
+                        assertions: assertions(
+                            of: subschema, at: documentPath,
+                            describing: "member \(index + 1) of \(subject)"
+                        )
+                    )
+                }
+            )
+        case .one(let subschemas, _), .any(let subschemas, _):
+            // The generator emits a `oneOf`/`anyOf` as an enum whose cases are named after the referenced
+            // schema for a `$ref` member and positionally (`case2`) for an inline one. Walking it would
+            // mean deriving a *third* set of generated names, alongside the safe-name transform and the
+            // status table — and a wrong guess there is a "no member" error inside generated code. So an
+            // assertion underneath one is refused rather than guessed at.
+            let reachable = subschemas.enumerated().compactMap { index, subschema -> String? in
+                let inner = assertions(
+                    of: subschema, at: documentPath, describing: "member \(index + 1) of \(subject)"
+                )
+                return inner.isEmpty ? nil : "assertions beneath member \(index + 1)"
+            }
+            guard !reachable.isEmpty else { return .none }
+            return .unrepresentable(
+                keywords: reachable,
+                reason: """
+                    the generator emits a oneOf/anyOf as an enum whose case names this adapter does not \
+                    derive
+                    """
+            )
         default:
             return .none
         }
+    }
+
+    /// Every component schema, by its document name, with what it asserts.
+    ///
+    /// Read whole rather than on demand: a `$ref` reached from a body becomes a call, and the thing it
+    /// calls has to exist. Schemas nothing reaches are simply never emitted.
+    func componentAssertions(at documentPath: String) -> [String: SpecAssertions] {
+        var found: [String: SpecAssertions] = [:]
+        for (key, schema) in components.schemas {
+            found[key.rawValue] = assertions(
+                of: schema, at: documentPath, describing: "schema '\(key.rawValue)'"
+            )
+        }
+        return found
     }
 }

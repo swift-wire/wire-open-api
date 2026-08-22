@@ -43,6 +43,10 @@ struct DirectDispatchEmitter {
     /// is what resolves it (spike-28).
     let specModule: String?
     let operationRoutes: [String: OperationRoute]
+    /// Every component schema by its document name, so a `$ref` can be emitted as a call to the
+    /// validator for that name rather than expanded in place — which is what terminates on a recursive
+    /// schema and keeps the output linear in the document.
+    let componentSchemas: [String: SpecAssertions]
     let serverPrefix: ServerPrefix
     /// How this document's symbols are spelled. Read from its generator config rather than assumed —
     /// `GeneratorSafeNames` turns an operationId into `Operations.<X>` and a parameter name into an

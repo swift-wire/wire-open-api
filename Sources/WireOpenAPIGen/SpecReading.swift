@@ -106,6 +106,16 @@ indirect enum SpecAssertions {
         multipleOf: Double?
     )
     case array(minItems: Int?, maxItems: Int?, uniqueItems: Bool, items: SpecAssertions)
+    /// A `$ref` to a component schema, by its **document** name. Kept as a name rather than resolved so
+    /// emission becomes a call to that schema's validator — which is what makes recursion terminate and
+    /// keeps code size linear in the document rather than in operations × depth.
+    case reference(String)
+    /// An object, reached by walking its properties. Anonymous ones are walked in place: only a *named*
+    /// schema needs its Swift type spelled, and an inline payload's type name
+    /// (`Operations.X.Input.Body.JsonPayload.NestedPayload`) is a spelling worth never deriving.
+    case object(properties: [SpecProperty])
+    /// `allOf`. The generated struct holds one member per subschema, `value1`/`value2` positionally.
+    case composed(members: [SpecComposedMember])
     /// Assertions the document makes that this adapter cannot apply, carried so the *diagnostic* can name
     /// the keywords rather than the emitter silently dropping them.
     case unrepresentable(keywords: [String], reason: String)
@@ -117,9 +127,35 @@ indirect enum SpecAssertions {
         case .none: return true
         case .array(let minItems, let maxItems, let uniqueItems, let items):
             return minItems == nil && maxItems == nil && !uniqueItems && items.isEmpty
+        // A reference is never empty *here*: whether the schema it names asserts anything is that
+        // schema's question, answered where its validator is emitted. Treating it as empty would prune
+        // the walk before reaching the assertions it leads to.
+        case .reference: return false
+        case .object(let properties): return properties.allSatisfy(\.assertions.isEmpty)
+        case .composed(let members): return members.allSatisfy(\.assertions.isEmpty)
         default: return false
         }
     }
+}
+
+/// One property of an object schema.
+struct SpecProperty {
+    /// The name as the document writes it, which is also what the wire carries and what a failure reports.
+    let name: String
+    /// Whether the document lists it in `required:`, which is exactly when the generator emits a
+    /// non-optional member — so it decides whether access needs an `?`.
+    let isRequired: Bool
+    let assertions: SpecAssertions
+}
+
+/// One member of an `allOf`, in document order.
+///
+/// The generated struct names them `value1`, `value2`, … positionally. They have **no wire counterpart**:
+/// the generated `init(from:)` decodes every member from the same decoder, so a failure inside one is
+/// reported at the *parent's* path, not under `value1`.
+struct SpecComposedMember {
+    let index: Int
+    let assertions: SpecAssertions
 }
 
 /// One `parameters:` entry — its documented name, where it lives, and what it asserts.
@@ -156,6 +192,9 @@ struct SpecResponse {
 struct SpecRequestBody {
     let isRequired: Bool
     let contentTypes: [String]
+    /// What the JSON schema of this body asserts. Only the JSON one: it is the only content type whose
+    /// value the generator gives a schema-derived Swift type, so it is the only one a validator can walk.
+    let assertions: SpecAssertions
 }
 
 // MARK: - the naming strategy
