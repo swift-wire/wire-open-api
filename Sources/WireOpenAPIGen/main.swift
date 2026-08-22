@@ -189,7 +189,7 @@ for (spec, controllers) in byGroup.sorted(by: { $0.key < $1.key }) where !contro
         proxy: proxyTypeName(for: spec),
         controllers: controllers,
         specModule: specModule,
-        operationRoutes: document?.operationRoutes ?? [:],
+        operationRoutes: document?.operationRoutes(documentPath: specPath ?? "") ?? [:],
         serverPrefix: resolveServerPrefix(document: document, path: specPath ?? ""),
         namingStrategy: resolveNamingStrategy(configPath: specConfigPaths[spec == localModule ? "" : spec]),
         foldEntries: foldEntries
