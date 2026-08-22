@@ -69,9 +69,33 @@ struct TaskController<Store: TaskStoring> {
     @Inject let store: Store
     @Inject let identity: RequestIdentity
 
+    /// The **mapped** tier for a schema-validation rejection: the document declares a 422 carrying a
+    /// `Problem`, so the failure is answered as one of this operation's own responses and the generator
+    /// serialises it exactly as it would a success.
+    ///
+    /// On a `@RawOperation` deliberately. Validation reads the generated `Input`, which a raw operation
+    /// receives too, so it is not a typed-shim concern — and an author who took the raw escape hatch for
+    /// the *response* shape still gets their document's assertions enforced.
+    ///
+    /// The throw is hand-written here because no emitter exists yet (slice 1). What it proves is the
+    /// path, not the walk: this is exactly what a generated validator will throw.
     @RawOperation
+    @ErrorResponse(
+        WireOpenAPIRequestValidationError.self,
+        .unprocessableContent,
+        { error in Components.Schemas.Problem(message: "invalid: \(error.failures.map(\.path).joined(separator: ", "))")
+        }
+    )
     func getTask(_ input: Operations.GetTask.Input) async throws -> Operations.GetTask.Output {
-        .ok(
+        if input.path.id == "invalid" {
+            throw WireOpenAPIRequestValidationError(
+                operationID: "getTask",
+                failures: [
+                    .init(path: "body.title", keyword: "minLength", expected: "3", actual: "ab", location: .body)
+                ]
+            )
+        }
+        return .ok(
             .init(
                 body: .json(
                     .init(
@@ -169,6 +193,19 @@ struct TaskListController<Store: TaskStoring> {
     @Operation
     @ResponseStatus(.noContent)
     func deleteTask(@Path id: String) async throws {
+        // The **unmapped** tier, and the location split with it. Nothing maps a validation error on this
+        // controller, so the answer comes from `HTTPResponseConvertible`: the runtime wraps the throw in
+        // a `ServerError`, which lifts its status and body from the underlying error. A *parameter*
+        // failure answers 400 where `getTask`'s body failure answers 422 — the same split
+        // `WireMVCBindingError` already draws, so a `@Get` route and an operation agree.
+        if id == "invalid" {
+            throw WireOpenAPIRequestValidationError(
+                operationID: "deleteTask",
+                failures: [
+                    .init(path: "path.id", keyword: "pattern", expected: "^[a-z]+$", actual: id, location: .path)
+                ]
+            )
+        }
         // Not mapped here, so the *controller's* mapping answers it — 500, where `summariseTask`'s own
         // mapping of the same error answers 404.
         if id == "missing" { throw NoSuchTask() }
@@ -184,9 +221,20 @@ struct TaskListController<Store: TaskStoring> {
         @Query("title") title: String,
         @JSONBody draft: Components.Schemas.Task?
     ) async throws -> Components.Schemas.Task {
+        // The other blame. A response that violates the document is the *service's* fault, so it is a
+        // different type answering 500 with **no body** — the caller did nothing wrong and can do nothing
+        // about it, so there is no honest 4xx and nothing of the service's internals to hand over.
+        if title == "badresponse" {
+            throw WireOpenAPIResponseValidationError(
+                operationID: "replaceTask",
+                failures: [
+                    .init(path: "id", keyword: "minLength", expected: "1", actual: "", location: .body)
+                ]
+            )
+        }
         // The document does not mark this body required, so the generated `Input.body` is optional and
         // the handler has to be too. A disagreement either way is diagnosed.
-        .init(id: id, title: "\(title) from \(draft?.id ?? "nothing")")
+        return .init(id: id, title: "\(title) from \(draft?.id ?? "nothing")")
     }
 
     /// Route-scope middleware: `Audit` folds around this operation only. `@RawOperation` is what ties the
