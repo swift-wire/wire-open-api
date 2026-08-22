@@ -80,6 +80,11 @@ let package = Package(
                 .product(name: "SwiftParser", package: "swift-syntax"),
             ]
         ),
+        // Gates the diagnostics WireOpenAPIGen *rejects* with — the half the fixture cannot cover, since
+        // it proves only what builds. A subprocess tool rather than a test for the reason NamingGoldenTool
+        // is one: the contract under test is an exit code and a stderr message, which is what a caller
+        // actually sees, and an executable cannot be imported to assert it any other way.
+        .executableTarget(name: "DiagnosticGoldenTool", exclude: ["diagnostics-golden.txt"]),
         .executableTarget(
             name: "WireOpenAPIGen",
             dependencies: [
