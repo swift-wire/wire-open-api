@@ -106,6 +106,9 @@ let package = Package(
             ]
         ),
         .testTarget(name: "WireOpenAPINamingTests", dependencies: ["WireOpenAPINaming"]),
+        // The runtime's own logic — the status rule and the failure cap — which is decided rather than
+        // walked, so it is worth asserting directly instead of only through the fixture's HTTP round-trip.
+        .testTarget(name: "WireOpenAPITests", dependencies: ["WireOpenAPI"]),
         .testTarget(
             name: "WireOpenAPIMacrosTests",
             dependencies: [

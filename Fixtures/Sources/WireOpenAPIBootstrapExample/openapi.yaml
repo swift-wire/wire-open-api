@@ -21,6 +21,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Task'
+        # Declared so a schema-validation rejection has a documented response to be answered with.
+        # It carries a body, which is what makes the mapping on `getTask` use the closure form — the
+        # document picks the form, here as everywhere.
+        '422':
+          description: The request does not satisfy the document
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /tasks:
     get:
       operationId: listTasks
