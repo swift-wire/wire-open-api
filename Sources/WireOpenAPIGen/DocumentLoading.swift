@@ -132,7 +132,15 @@ extension OpenAPIKit.OpenAPI.Document {
                             at: documentPath
                         )
                         guard let location = SpecParameter.Location(parameter.context) else { return nil }
-                        return SpecParameter(name: parameter.name, location: location)
+                        return SpecParameter(
+                            name: parameter.name,
+                            location: location,
+                            assertions: assertions(
+                                of: parameter.schemaOrContent.schemaValue,
+                                at: documentPath,
+                                describing: "parameter '\(parameter.name)' of '\(operationID)'"
+                            )
+                        )
                     }
                 let responses = endpoint.operation.responses
                     .compactMap { statusCode, responseReference -> SpecResponse? in
@@ -185,6 +193,93 @@ extension SpecParameter.Location {
         case .header: self = .header
         // `cookie`, and anything a later OpenAPI version adds, has no `Input` member the shim can read.
         default: return nil
+        }
+    }
+}
+
+// MARK: - reading a schema's assertions
+
+extension OpenAPIKit.OpenAPI.Document {
+    /// What a schema asserts, as far as `WireOpenAPIValidate` can check it.
+    ///
+    /// A `$ref` is followed one hop, like every other reference this file reads — the generated type for
+    /// a referenced scalar schema is a typealias to the same Swift type, so the checks apply unchanged.
+    ///
+    /// The shapes deliberately *not* read here are objects and compositions. A parameter whose schema is
+    /// either is rare, and this slice covers scalars and arrays of them; erroring on one would break
+    /// documents that serve correctly today, and slice 3 reaches them properly when it walks component
+    /// schemas. See Notes/WireOpenAPIValidation.md.
+    func assertions(
+        of schema: OpenAPIKit.JSONSchema?,
+        at documentPath: String,
+        describing subject: String
+    ) -> SpecAssertions {
+        guard let schema else { return .none }
+        let resolved: OpenAPIKit.JSONSchema
+        do { resolved = try components.lookup(schema) } catch {
+            diagnoseDocument(
+                documentPath,
+                "has a schema reference for \(subject) that could not be resolved: \(error)"
+            )
+        }
+        // An `enum` is emitted by the generator as a Swift enum, so the member's type is not the scalar
+        // any more and no check of ours would compile against it — nor is one needed, since the enum is
+        // a stronger constraint than anything alongside it.
+        if resolved.coreContext.allowedValues != nil { return .none }
+
+        switch resolved.value {
+        case .string(let core, let context):
+            let keywords =
+                [
+                    context.minLength > 0 ? "minLength" : nil, context.maxLength.map { _ in "maxLength" },
+                    context.pattern.map { _ in "pattern" },
+                ].compactMap { $0 }
+            guard !keywords.isEmpty else { return .none }
+            // `format: date-time` is emitted as a `Foundation.Date`, so a string assertion has nothing to
+            // measure — the value is no longer a string by the time the handler could see it. Every other
+            // string format stays a `String` and is checked normally.
+            if core.format.rawValue == "date-time" {
+                return .unrepresentable(
+                    keywords: keywords,
+                    reason: "the generator emits `format: date-time` as a Foundation.Date, not a String"
+                )
+            }
+            return .string(
+                minLength: context.minLength > 0 ? context.minLength : nil,
+                maxLength: context.maxLength,
+                pattern: context.pattern
+            )
+        case .integer(_, let context):
+            guard context.minimum != nil || context.maximum != nil || context.multipleOf != nil else {
+                return .none
+            }
+            return .integer(
+                minimum: context.minimum?.value,
+                exclusiveMinimum: context.minimum?.exclusive ?? false,
+                maximum: context.maximum?.value,
+                exclusiveMaximum: context.maximum?.exclusive ?? false,
+                multipleOf: context.multipleOf
+            )
+        case .number(_, let context):
+            guard context.minimum != nil || context.maximum != nil || context.multipleOf != nil else {
+                return .none
+            }
+            return .number(
+                minimum: context.minimum?.value,
+                exclusiveMinimum: context.minimum?.exclusive ?? false,
+                maximum: context.maximum?.value,
+                exclusiveMaximum: context.maximum?.exclusive ?? false,
+                multipleOf: context.multipleOf
+            )
+        case .array(_, let context):
+            return .array(
+                minItems: context.minItems > 0 ? context.minItems : nil,
+                maxItems: context.maxItems,
+                uniqueItems: context.uniqueItems,
+                items: assertions(of: context.items, at: documentPath, describing: "items of \(subject)")
+            )
+        default:
+            return .none
         }
     }
 }

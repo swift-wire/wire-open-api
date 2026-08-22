@@ -86,10 +86,48 @@ struct OperationRoute {
     let requestBody: SpecRequestBody?
 }
 
-/// One `parameters:` entry — its documented name and where it lives.
+/// The assertions a schema declares, reduced to the ones this adapter can check.
+///
+/// Read from the document rather than from the generated Swift, like everything else here. The shape
+/// mirrors the runtime's `WireOpenAPIValidate` calls one-for-one, so emission is a transcription rather
+/// than a translation with judgement in it.
+indirect enum SpecAssertions {
+    /// Nothing to check — including the cases where the *generator* already did it. An `enum` becomes a
+    /// Swift enum and `required` becomes non-optional, so neither needs a runtime check, and emitting one
+    /// would not compile anyway: the member's type is the enum, not `String`.
+    case none
+    case string(minLength: Int?, maxLength: Int?, pattern: String?)
+    case integer(minimum: Int?, exclusiveMinimum: Bool, maximum: Int?, exclusiveMaximum: Bool, multipleOf: Int?)
+    case number(
+        minimum: Double?,
+        exclusiveMinimum: Bool,
+        maximum: Double?,
+        exclusiveMaximum: Bool,
+        multipleOf: Double?
+    )
+    case array(minItems: Int?, maxItems: Int?, uniqueItems: Bool, items: SpecAssertions)
+    /// Assertions the document makes that this adapter cannot apply, carried so the *diagnostic* can name
+    /// the keywords rather than the emitter silently dropping them.
+    case unrepresentable(keywords: [String], reason: String)
+
+    /// Whether emission should produce nothing at all. Load-bearing: a document declaring no assertions
+    /// must cost an existing consumer nothing, which is what makes always-on validation acceptable.
+    var isEmpty: Bool {
+        switch self {
+        case .none: return true
+        case .array(let minItems, let maxItems, let uniqueItems, let items):
+            return minItems == nil && maxItems == nil && !uniqueItems && items.isEmpty
+        default: return false
+        }
+    }
+}
+
+/// One `parameters:` entry — its documented name, where it lives, and what it asserts.
 struct SpecParameter {
     let name: String
     let location: Location
+    /// What the parameter's schema asserts about its value.
+    let assertions: SpecAssertions
 
     /// The `Input` member each location is reached through. `headers` is plural; the other two are not.
     enum Location: String {

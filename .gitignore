@@ -2,5 +2,8 @@
 .swiftpm/
 .DS_Store
 build.log
+# Written by the fixture's serve step (and by the CI script that drives it), so a local run of
+# either would otherwise dirty the tree. Bare, like build.log, so it matches wherever it is written.
+serverlog.txt
 swiftlint.zip
 .vscode/

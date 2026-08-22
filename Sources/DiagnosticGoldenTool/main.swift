@@ -151,6 +151,23 @@ func controller(
 
 let problemBody = #"{ _ in Components.Schemas.Problem(message: "x") }"#
 
+/// A document whose single operation takes one query parameter with the given schema — for the assertion
+/// diagnostics, which are about a parameter rather than a response.
+func parameterDocument(_ schema: String) -> String {
+    """
+    openapi: 3.1.0
+    info: { title: Gate, version: 1.0.0 }
+    paths:
+      /opA:
+        get:
+          operationId: opA
+          parameters:
+            - { name: q, in: query, schema: \(schema) }
+          responses:
+            '200': { description: ok }
+    """
+}
+
 struct Gate {
     let name: String
     /// Why this case exists, carried into the golden so a reader of the table knows what it protects.
@@ -262,6 +279,25 @@ let gates: [Gate] = [
                 )
             ]
         )
+    ),
+    // Slice 2's reject paths. The document asks for a check the adapter cannot make, and saying so is
+    // the whole point: a document that declares an assertion and gets no enforcement is the failure the
+    // capability exists to remove, so producing that *silently* would be worse than the gap it replaced.
+    Gate(
+        name: "parameters/assertion-on-a-type-the-format-changed",
+        summary:
+            "`format: date-time` is emitted as a Foundation.Date, so a string assertion has nothing to "
+            + "measure — the value is not a string by the time a check could run",
+        document: parameterDocument("{ type: string, format: date-time, minLength: 5 }"),
+        controller: controller(operations: [("opA", [])])
+    ),
+    Gate(
+        name: "parameters/pattern-swift-cannot-compile",
+        summary:
+            "patterns are compiled at build time, so an unreadable one fails the build naming the "
+            + "parameter rather than trapping on the first request that reaches it",
+        document: parameterDocument("{ type: string, pattern: '[a-' }"),
+        controller: controller(operations: [("opA", [])])
     ),
     // The one accept case, and it earns its place: it is the arrangement the "disagree" message tells the
     // author to move to. A diagnostic whose advice does not work is worse than no diagnostic.
