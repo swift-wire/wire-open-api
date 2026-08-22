@@ -94,9 +94,11 @@ paths:
     post:
       operationId: deleteTask
       # No mapping covers a validation failure here, so the unmapped tier answers it — 400, because the
-      # violation is in a *parameter* rather than a body.
+      # violation is in a *parameter* rather than a body. The bound is an upper one so that every id the
+      # rest of the fixture already deletes stays valid: a new assertion should demonstrate itself
+      # without rewriting the assertions around it.
       parameters:
-        - { name: id, in: path, required: true, schema: { type: string, minLength: 2 } }
+        - { name: id, in: path, required: true, schema: { type: string, maxLength: 8 } }
       responses:
         '500': { description: Failed }
         '202': { description: Accepted }

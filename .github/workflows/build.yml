@@ -191,6 +191,15 @@ jobs:
             "http://127.0.0.1:8080/api/v1/tasks/new?title=hello" -w '%{http_code}')
           deleted=$(curl -s -o /dev/null -X POST http://127.0.0.1:8080/api/v1/tasks/7/delete \
             -w '%{http_code}:%{size_download}')
+          # Assertions the *document* makes that the generator drops. `getTask` puts a `pattern` on its
+          # path parameter and maps the failure to its documented 422, so the answer is one of the
+          # operation's own responses. `deleteTask` bounds its own with `maxLength` and maps nothing, so
+          # the unmapped tier answers — 400, because the violation is in a parameter and not a body.
+          # Both are generated: nothing in either controller checks anything by hand.
+          assertMapped=$(curl -s -w ' [%{http_code}]' -H 'x-api-key: secret' \
+            http://127.0.0.1:8080/api/v1/tasks/NOT-LOWERCASE)
+          assertUnmapped=$(curl -s -w ' [%{http_code}]' -X POST \
+            http://127.0.0.1:8080/api/v1/tasks/far-too-long-to-be-an-id/delete)
           # An *optional* body: the generated `Input.body` is optional exactly when the document does not
           # require one, so both presence and absence have to work.
           replaced=$(curl -s -X POST -H 'Content-Type: application/json' -d '{"id":"B9","title":"x"}' \
@@ -343,6 +352,17 @@ jobs:
           [ "$wrongType" = 415 ] \
             || { echo "a wrong content type did not answer 415 ($wrongType)"; exit 1; }
           [ "$deleted" = "204:0" ] || { echo "the no-content response was not constructed ($deleted)"; exit 1; }
+          # The mapped tier answers as the document describes; the unmapped one names the failure so a
+          # caller can act on it. Asserting the *body* of each, not just the status: a 422 that carried
+          # the wrong thing, or a 400 that named no field, would pass a status-only check.
+          case "$(plain "$assertMapped")" in
+            *'"message":"invalid: path.id"'*"[422]") ;;
+            *) echo "a schema violation was not mapped to the document's response ($assertMapped)"; exit 1;;
+          esac
+          case "$(plain "$assertUnmapped")" in
+            *'"keyword":"maxLength"'*'"path":"path.id"'*"[400]") ;;
+            *) echo "an unmapped schema violation did not answer 400 with its failures ($assertUnmapped)"; exit 1;;
+          esac
           grep -q '^deleted: 7' serverlog.txt \
             || { echo "a no-content handler was not called"; exit 1; }
           case "$(plain "$replaced")" in
