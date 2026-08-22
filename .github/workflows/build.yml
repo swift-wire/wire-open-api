@@ -75,6 +75,19 @@ jobs:
           OPENAPI_GENERATOR_PATH: ${{ github.workspace }}/Fixtures/.build/checkouts/swift-openapi-generator
         run: swiftly run swift run NamingGoldenTool --check
 
+      - name: Check the diagnostics WireOpenAPIGen rejects with
+        # The fixture proves only what *builds*, so every reject path was unguarded — and a diagnostic
+        # that quietly stops firing does not fail anything, it moves the failure into generated code at a
+        # line nobody wrote. This runs WireOpenAPIGen over a corpus of documents and controllers that must
+        # be refused, and diffs its exit code and stderr against the checked-in table. Wording is held
+        # too: a diagnostic that still fires but has lost its advice is a regression as well.
+        #
+        # `swift build` first so the binary sits beside the tool — it locates one rather than nesting
+        # `swift run`, which would have both invocations contend for this package's build lock.
+        run: |
+          swiftly run swift build --product WireOpenAPIGen
+          swiftly run swift run DiagnosticGoldenTool --check
+
       - name: Serve an OpenAPI operation and a @Get route from one router
         working-directory: Fixtures
         # The M6d.1 gate. Four plugins run over one target — swift-openapi-generator, WireGen,
