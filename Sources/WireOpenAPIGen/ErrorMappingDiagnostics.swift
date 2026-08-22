@@ -177,7 +177,8 @@ extension DirectDispatchEmitter {
                     !operation.errorMappings.contains { $0.errorType == mapping.errorType }
                 }
                 if !mapping.isTerminalScoped {
-                    let undeclared = covered
+                    let undeclared =
+                        covered
                         .filter { documentedResponse(mapping, for: $0) == nil }
                         .map { "'\($0.operationID)'" }
                         .sorted()
