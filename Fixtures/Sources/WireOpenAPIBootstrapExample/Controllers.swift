@@ -83,7 +83,8 @@ struct TaskController<Store: TaskStoring> {
     @ErrorResponse(
         WireOpenAPIRequestValidationError.self,
         .unprocessableContent,
-        { error in Components.Schemas.Problem(message: "invalid: \(error.failures.map(\.path).joined(separator: ", "))") }
+        { error in Components.Schemas.Problem(message: "invalid: \(error.failures.map(\.path).joined(separator: ", "))")
+        }
     )
     func getTask(_ input: Operations.GetTask.Input) async throws -> Operations.GetTask.Output {
         if input.path.id == "invalid" {
