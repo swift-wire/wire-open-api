@@ -45,6 +45,14 @@ rejected: Controller.swift:9: error: @ErrorResponse(Gone.self, .notFound) on 'Ga
 # a catch-all matches everything, so anything after it is dead
 rejected: Controller.swift:12: error: @ErrorResponse(Swift.Error.self, .notFound) on 'opA' is a catch-all, so the mappings after it can never match — Gone. Put the catch-all last.
 
+## parameters/assertion-on-a-type-the-format-changed
+# `format: date-time` is emitted as a Foundation.Date, so a string assertion has nothing to measure — the value is not a string by the time a check could run
+rejected: Controller.swift:10: error: the 'q' parameter of 'opA' declares `minLength`, which this adapter cannot check because the generator emits `format: date-time` as a Foundation.Date, not a String. Remove the assertion, or take the operation @RawOperation and check it by hand.
+
+## parameters/pattern-swift-cannot-compile
+# patterns are compiled at build time, so an unreadable one fails the build naming the parameter rather than trapping on the first request that reaches it
+rejected: Controller.swift:10: error: the 'q' parameter of 'opA' declares `pattern: [a-`, which Swift's regular-expression engine cannot compile. JSON Schema patterns are ECMA-262; most translate directly, but this one does not. Rewrite it, or remove it and check by hand.
+
 ## accepted/per-operation-forms-are-the-remedy-for-disagreement
 # each operation takes the form its own documented response requires
 accepted

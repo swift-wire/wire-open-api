@@ -40,9 +40,12 @@ extension DirectDispatchEmitter {
                 .map { "    typealias \($0) = \(qualified($0))\n" }
                 .joined() + "\n"
         let noSubject = noSubjectHelper
+        // Inside the namespace, so the validator's `Operations.X.Input` resolves to *this* spec's module
+        // by the same typealiases the forwarders rely on.
+        let validation = validationDeclaration().map { "\n" + indented($0) + "\n" } ?? ""
         return """
             enum \(namespace) {
-            \(aliases)\(indented(body))\(indented(noSubject))
+            \(aliases)\(indented(body))\(validation)\(indented(noSubject))
             }
             """
     }
@@ -103,7 +106,7 @@ extension DirectDispatchEmitter {
     }
 
     /// `Operations.<X>` for an operation, spelled as this spec's namespace resolves it.
-    private func operationNamespace(_ operation: DiscoveredOperation) -> String {
+    func operationNamespace(_ operation: DiscoveredOperation) -> String {
         "Operations.\(GeneratorSafeNames.swiftTypeName(for: operation.operationID, strategy: namingStrategy))"
     }
 
@@ -261,8 +264,11 @@ extension DirectDispatchEmitter {
         subject: String,
         indent: String = "        "
     ) -> String {
+        // Before anything else, and inside the `do`: a validation failure is an outcome of *this*
+        // operation, so `@ErrorResponse` gets its turn at it exactly as it does at a handler throw.
+        let validation = validationCall(operation, indent: indent)
         guard operation.isTyped else {
-            return "\(indent)return try await \(subject).\(operation.methodName)(input)"
+            return "\(validation)\(indent)return try await \(subject).\(operation.methodName)(input)"
         }
         let arguments = operation.parameters.map { parameter -> String in
             let label = parameter.label.map { "\($0): " } ?? ""
@@ -271,8 +277,9 @@ extension DirectDispatchEmitter {
             return "\(label)input.\(inputMember(for: parameter, in: operation))"
         }
         let prelude =
-            operation.parameters.first(where: \.isBody)
-            .map { bodyBinding($0, in: operation, indent: indent) + "\n" } ?? ""
+            validation
+            + (operation.parameters.first(where: \.isBody)
+                .map { bodyBinding($0, in: operation, indent: indent) + "\n" } ?? "")
         let call = "try await \(subject).\(operation.methodName)(\(arguments.joined(separator: ", ")))"
         let response = selectedResponse(for: operation)
         let caseName = GeneratorStatusNames.safeName(for: response.code)

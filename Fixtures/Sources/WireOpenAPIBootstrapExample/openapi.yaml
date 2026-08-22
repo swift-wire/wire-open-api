@@ -12,8 +12,12 @@ paths:
         - name: id
           in: path
           required: true
+          # An assertion the generator drops: it emits `Swift.String` and enforces nothing. The generated
+          # validator checks it before the handler runs, and this operation maps the failure to its
+          # documented 422 below.
           schema:
             type: string
+            pattern: '^[a-z0-9-]+$'
       responses:
         '200':
           description: A task
@@ -89,8 +93,10 @@ paths:
   /tasks/{id}/delete:
     post:
       operationId: deleteTask
+      # No mapping covers a validation failure here, so the unmapped tier answers it — 400, because the
+      # violation is in a *parameter* rather than a body.
       parameters:
-        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: id, in: path, required: true, schema: { type: string, minLength: 2 } }
       responses:
         '500': { description: Failed }
         '202': { description: Accepted }

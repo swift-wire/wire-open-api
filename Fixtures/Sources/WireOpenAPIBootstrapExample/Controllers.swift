@@ -77,8 +77,9 @@ struct TaskController<Store: TaskStoring> {
     /// receives too, so it is not a typed-shim concern — and an author who took the raw escape hatch for
     /// the *response* shape still gets their document's assertions enforced.
     ///
-    /// The throw is hand-written here because no emitter exists yet (slice 1). What it proves is the
-    /// path, not the walk: this is exactly what a generated validator will throw.
+    /// The throw is the **generated validator's**, from the `pattern` the document puts on `id`. Slice 1
+    /// proved this path with a hand-written throw; slice 2 replaced it with the real thing, and the
+    /// observable behaviour is identical — which is the point.
     @RawOperation
     @ErrorResponse(
         WireOpenAPIRequestValidationError.self,
@@ -87,14 +88,6 @@ struct TaskController<Store: TaskStoring> {
         }
     )
     func getTask(_ input: Operations.GetTask.Input) async throws -> Operations.GetTask.Output {
-        if input.path.id == "invalid" {
-            throw WireOpenAPIRequestValidationError(
-                operationID: "getTask",
-                failures: [
-                    .init(path: "body.title", keyword: "minLength", expected: "3", actual: "ab", location: .body)
-                ]
-            )
-        }
         return .ok(
             .init(
                 body: .json(
@@ -198,14 +191,6 @@ struct TaskListController<Store: TaskStoring> {
         // a `ServerError`, which lifts its status and body from the underlying error. A *parameter*
         // failure answers 400 where `getTask`'s body failure answers 422 — the same split
         // `WireMVCBindingError` already draws, so a `@Get` route and an operation agree.
-        if id == "invalid" {
-            throw WireOpenAPIRequestValidationError(
-                operationID: "deleteTask",
-                failures: [
-                    .init(path: "path.id", keyword: "pattern", expected: "^[a-z]+$", actual: id, location: .path)
-                ]
-            )
-        }
         // Not mapped here, so the *controller's* mapping answers it — 500, where `summariseTask`'s own
         // mapping of the same error answers 404.
         if id == "missing" { throw NoSuchTask() }

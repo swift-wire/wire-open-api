@@ -29,6 +29,7 @@ extension DirectDispatchEmitter {
         diagnoseCatchAllOrdering()
         diagnoseTypedBindings()
         diagnoseTypedResponses()
+        diagnoseParameterAssertions()
         let marked = byOperationID
         let missing = operationRoutes.keys.filter { marked[$0] == nil }.sorted()
         guard !missing.isEmpty else { return }
