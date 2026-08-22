@@ -118,8 +118,10 @@ extension OpenAPIKit.OpenAPI.Document {
             // an operationId the document appears not to declare — a diagnostic pointing at the
             // controller for a fault in the document.
             let item = resolve(
-                    pathItemReference, "a path item reference for '\(path.rawValue)'", at: documentPath
-                )
+                pathItemReference,
+                "a path item reference for '\(path.rawValue)'",
+                at: documentPath
+            )
             for endpoint in item.endpoints {
                 guard let operationID = endpoint.operation.operationId else { continue }
                 let parameters = (item.parameters + endpoint.operation.parameters)
@@ -151,7 +153,9 @@ extension OpenAPIKit.OpenAPI.Document {
                     .sorted { $0.code < $1.code }
                 let requestBody = endpoint.operation.requestBody.map { bodyReference in
                     let body = resolve(
-                        bodyReference, "a request body reference in '\(operationID)'", at: documentPath
+                        bodyReference,
+                        "a request body reference in '\(operationID)'",
+                        at: documentPath
                     )
                     return SpecRequestBody(
                         isRequired: body.required,
