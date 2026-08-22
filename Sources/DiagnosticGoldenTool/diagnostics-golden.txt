@@ -47,11 +47,19 @@ rejected: Controller.swift:12: error: @ErrorResponse(Swift.Error.self, .notFound
 
 ## parameters/assertion-on-a-type-the-format-changed
 # `format: date-time` is emitted as a Foundation.Date, so a string assertion has nothing to measure — the value is not a string by the time a check could run
-rejected: Controller.swift:10: error: the 'q' parameter of 'opA' declares `minLength`, which this adapter cannot check because the generator emits `format: date-time` as a Foundation.Date, not a String. Remove the assertion, or take the operation @RawOperation and check it by hand.
+rejected: Controller.swift:10: error: 'query.q' in the request of 'opA' declares `minLength`, which this adapter cannot check because the generator emits `format: date-time` as a Foundation.Date, not a String. Remove it from the document, or check it in the handler. @RawOperation is not an escape — validation is emitted for those too, from the same document.
 
 ## parameters/pattern-swift-cannot-compile
 # patterns are compiled at build time, so an unreadable one fails the build naming the parameter rather than trapping on the first request that reaches it
-rejected: Controller.swift:10: error: the 'q' parameter of 'opA' declares `pattern: [a-`, which Swift's regular-expression engine cannot compile. JSON Schema patterns are ECMA-262; most translate directly, but this one does not. Rewrite it, or remove it and check by hand.
+rejected: Controller.swift:10: error: 'query.q' in the request of 'opA' declares `pattern: [a-`, which Swift's regular-expression engine cannot compile. JSON Schema patterns are ECMA-262; most translate directly, but this one does not. Rewrite it, or remove it and check it in the handler.
+
+## schemas/property-count-bounds
+# a generated struct has a fixed set of members and no runtime property count — and the bound is only reported when it says more than `required:` already does
+rejected: Controller.swift:10: error: 'body' in the request of 'opA' declares `minProperties`, which this adapter cannot check because a generated struct has a fixed set of members and no runtime property count. Remove it from the document, or check it in the handler. @RawOperation is not an escape — validation is emitted for those too, from the same document.
+
+## schemas/assertion-beneath-a-oneOf
+# the generator emits a oneOf as an enum whose case names this adapter does not derive, so an assertion underneath one is refused rather than guessed at
+rejected: Controller.swift:10: error: 'body' in the request of 'opA' declares assertions beneath member 1, which this adapter cannot check because the generator emits a oneOf/anyOf as an enum whose case names this adapter does not derive. Remove it from the document, or check it in the handler. @RawOperation is not an escape — validation is emitted for those too, from the same document.
 
 ## accepted/per-operation-forms-are-the-remedy-for-disagreement
 # each operation takes the form its own documented response requires

@@ -166,8 +166,12 @@ func document(_ operations: [(id: String, response: Response404)]) -> String {
 
 /// A controller implementing every operation the document declares — coverage is its own diagnostic, and
 /// tripping it would mask the one under test.
+/// `raw` takes the operations with `@RawOperation` instead of `@Operation`. The body cases need it —
+/// a typed handler must bind a documented body and these cases are not about binding — and it doubles as
+/// the check that validation is emitted for a raw operation, which receives the same `Input`.
 func controller(
     typeAttributes: [String] = [],
+    raw: Bool = false,
     operations: [(id: String, attributes: [String])]
 ) -> String {
     var lines = [
@@ -177,9 +181,17 @@ func controller(
     lines += typeAttributes
     lines.append("struct GateController {")
     for (id, attributes) in operations {
-        lines.append("    @Operation")
+        lines.append(raw ? "    @RawOperation" : "    @Operation")
         lines += attributes.map { "    " + $0 }
-        lines.append("    func \(id)() async throws { throw Gone() }")
+        if raw {
+            let type = id.prefix(1).uppercased() + id.dropFirst()
+            lines.append(
+                "    func \(id)(_ input: Operations.\(type).Input) async throws "
+                    + "-> Operations.\(type).Output { .ok }"
+            )
+        } else {
+            lines.append("    func \(id)() async throws { throw Gone() }")
+        }
         lines.append("")
     }
     lines.append("}")
@@ -187,6 +199,25 @@ func controller(
 }
 
 let problemBody = #"{ _ in Components.Schemas.Problem(message: "x") }"#
+
+/// A document whose single operation takes a JSON request body with the given schema, written in YAML
+/// flow style so it stays on one line — the same shape `parameterDocument` uses, and one less thing to
+/// get wrong than block indentation inside a Swift multiline literal.
+func bodyDocument(_ schema: String) -> String {
+    """
+    openapi: 3.1.0
+    info: { title: Gate, version: 1.0.0 }
+    paths:
+      /opA:
+        post:
+          operationId: opA
+          requestBody:
+            required: true
+            content: { application/json: { schema: \(schema) } }
+          responses:
+            '200': { description: ok }
+    """
+}
 
 /// A document whose single operation takes one query parameter with the given schema — for the assertion
 /// diagnostics, which are about a parameter rather than a response.
@@ -335,6 +366,27 @@ let gates: [Gate] = [
             + "parameter rather than trapping on the first request that reaches it",
         document: parameterDocument("{ type: string, pattern: '[a-' }"),
         controller: controller(operations: [("opA", [])])
+    ),
+    Gate(
+        name: "schemas/property-count-bounds",
+        summary:
+            "a generated struct has a fixed set of members and no runtime property count — and the bound "
+            + "is only reported when it says more than `required:` already does",
+        document: bodyDocument(
+            "{ type: object, minProperties: 2, properties: { a: { type: string }, b: { type: string } } }"
+        ),
+        controller: controller(raw: true, operations: [("opA", [])])
+    ),
+    Gate(
+        name: "schemas/assertion-beneath-a-oneOf",
+        summary:
+            "the generator emits a oneOf as an enum whose case names this adapter does not derive, so an "
+            + "assertion underneath one is refused rather than guessed at",
+        document: bodyDocument(
+            "{ oneOf: [ { type: object, properties: { a: { type: string, minLength: 3 } } }, "
+                + "{ type: object, properties: { b: { type: string } } } ] }"
+        ),
+        controller: controller(raw: true, operations: [("opA", [])])
     ),
     // The one accept case, and it earns its place: it is the arrangement the "disagree" message tells the
     // author to move to. A diagnostic whose advice does not work is worse than no diagnostic.

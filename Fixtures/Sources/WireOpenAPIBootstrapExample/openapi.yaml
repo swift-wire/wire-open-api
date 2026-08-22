@@ -142,6 +142,19 @@ components:
           type: string
         title:
           type: string
+          # A *body* assertion, where the parameter ones above are request-line. Unmapped it answers 422
+          # rather than 400 — the split `WireMVCBindingError` already draws, now reached from both sides.
+          minLength: 1
+          maxLength: 40
+        # Recursive, and constrained, so the generated validator for `Task` calls itself. That is the
+        # shape slice 3 exists for: a `$ref` becomes a call rather than an expansion, which is what
+        # terminates here and keeps the emitted code linear in the document. Keeping it in the fixture
+        # means a regression fails the build rather than hanging it.
+        subtasks:
+          type: array
+          maxItems: 3
+          items:
+            $ref: '#/components/schemas/Task'
         # Not required, so existing constructions still compile — but enough to prove an OpenAPI
         # operation and a `@Get` route now write a date the same way.
         at:
