@@ -155,8 +155,9 @@ extension DirectDispatchEmitter {
     /// has already been reached.
     private func schemaValidator(_ name: String, patterns: inout [String]) -> String {
         let body = checks(
-            for: componentSchemas[name] ?? .none, access: "value", path: "\\(path)",
-            location: "location", indent: "        ", patterns: &patterns
+            for: componentSchemas[name] ?? .none,
+            at: EmissionSite(access: "value", path: "\\(path)", location: "location", indent: "        "),
+            patterns: &patterns
         )
         // `location` is a parameter, not a literal: the same component schema can be reached from a
         // request body *and* from a `$ref`'d parameter schema, and the two earn different statuses — 422
@@ -183,10 +184,12 @@ extension DirectDispatchEmitter {
             blocks.append(
                 checks(
                     for: parameter.assertions,
-                    access: "input.\(inputMember(for: parameter))",
-                    path: "\(parameter.location.rawValue).\(parameter.name)",
-                    location: ".\(parameter.location.rawValue)",
-                    indent: "        ",
+                    at: EmissionSite(
+                        access: "input.\(inputMember(for: parameter))",
+                        path: "\(parameter.location.rawValue).\(parameter.name)",
+                        location: ".\(parameter.location.rawValue)",
+                        indent: "        "
+                    ),
                     patterns: &patterns
                 )
             )
@@ -196,10 +199,16 @@ extension DirectDispatchEmitter {
             // JSON one carries a value a validator can walk. Matching just that case keeps this correct
             // however many others the document declares.
             let pattern = body.isRequired ? ".json(let wireOpenAPIBody)" : ".some(.json(let wireOpenAPIBody))"
+            let bodySite = EmissionSite(
+                access: "wireOpenAPIBody",
+                path: "body",
+                location: ".body",
+                indent: "            "
+            )
             blocks.append(
                 """
                         if case \(pattern) = input.body {
-                \(checks(for: body.assertions, access: "wireOpenAPIBody", path: "body", location: ".body", indent: "            ", patterns: &patterns))
+                \(checks(for: body.assertions, at: bodySite, patterns: &patterns))
                         }
                 """
             )
@@ -225,118 +234,213 @@ extension DirectDispatchEmitter {
 
 // MARK: - walking a schema
 
-extension DirectDispatchEmitter {
-    /// The checks for one node, at one access expression and one JSON path.
-    ///
-    /// `path` is the *contents* of a Swift string literal, not a value: at operation level it is a
-    /// literal (`body`), and inside a schema validator it is `\(path)`, which interpolates the caller's.
-    /// One representation serves both, so appending a property is string concatenation either way.
-    func checks(
-        for node: SpecAssertions,
+/// Where a check is being emitted.
+///
+/// Five values travelled together through every recursive call — what to read, what path to report, which
+/// location decides the status, which accumulator to record into, and how far to indent. As separate
+/// arguments each call site was five lines of forwarding and it was easy to pass the wrong one; as a value
+/// they move together, and the three ways of stepping down are named rather than open-coded.
+struct EmissionSite {
+    /// The Swift expression producing the value to check.
+    let access: String
+    /// The **contents** of a Swift string literal, not a value: at operation level a literal (`body`), and
+    /// inside a schema validator `\(path)`, which interpolates the caller's. One representation serves
+    /// both, so appending a property is string concatenation either way.
+    let path: String
+    /// The Swift expression naming the failure's location — a literal (`.query`) at operation level, and
+    /// the forwarded `location` parameter inside a schema validator.
+    let location: String
+    let accumulator: String
+    let indent: String
+
+    init(
         access: String,
         path: String,
-        /// The Swift expression naming the failure's location — a literal (`.query`) at operation level,
-        /// and the forwarded `location` parameter inside a schema validator.
         location: String,
         accumulator: String = "wireOpenAPIFailures",
-        indent: String,
-        patterns: inout [String]
-    ) -> String {
+        indent: String
+    ) {
+        self.access = access
+        self.path = path
+        self.location = location
+        self.accumulator = accumulator
+        self.indent = indent
+    }
+
+    /// A property of this object: a step down in both the access and the reported path.
+    func property(access: String, named name: String) -> EmissionSite {
+        EmissionSite(
+            access: access,
+            path: "\(path).\(name)",
+            location: location,
+            accumulator: accumulator,
+            indent: indent
+        )
+    }
+
+    /// An `allOf` member. The access steps down; the **path does not** — `value1`/`value2` are Swift
+    /// artefacts with no wire counterpart, since the generated `init(from:)` decodes every member from the
+    /// same decoder, so a failure inside one belongs at the parent's path.
+    func composedMember(_ index: Int) -> EmissionSite {
+        EmissionSite(
+            access: "\(access).value\(index)",
+            path: path,
+            location: location,
+            accumulator: accumulator,
+            indent: indent
+        )
+    }
+
+    /// Inside an array's element closure. The accumulator changes because the outer one is `inout` and a
+    /// closure cannot capture it; the path becomes the closure's parameter, which the runtime has already
+    /// indexed.
+    var element: EmissionSite {
+        EmissionSite(
+            access: "wireOpenAPIItem",
+            path: "\\(wireOpenAPIItemPath)",
+            location: location,
+            accumulator: "wireOpenAPIItemFailures",
+            indent: indent + "        "
+        )
+    }
+}
+
+extension DirectDispatchEmitter {
+    /// The checks for one node at one site — a dispatch, with each shape's emission named below.
+    func checks(for node: SpecAssertions, at site: EmissionSite, patterns: inout [String]) -> String {
         switch node {
         case .none:
             return ""
         case .unrepresentable:
-            // Already reported by `diagnoseRequestAssertions`, which fails the build. Reaching here means
-            // it did not, so emitting nothing is the safe read.
+            // Already reported by `diagnoseParameterAssertions`, which fails the build. Reaching here
+            // means it did not, so emitting nothing is the safe read.
             return ""
         case .string(let minLength, let maxLength, let pattern):
-            var arguments: [String] = []
-            if let minLength { arguments.append("minLength: \(minLength)") }
-            if let maxLength { arguments.append("maxLength: \(maxLength)") }
-            if let pattern {
-                let index =
-                    patterns.firstIndex(of: pattern) ?? { patterns.append(pattern); return patterns.count - 1 }()
-                arguments.append("pattern: _p\(index)")
-            }
-            return call("string", access, path, location, arguments, accumulator, indent)
+            return stringCheck(minLength, maxLength, pattern, at: site, patterns: &patterns)
         case .integer(let minimum, let exclusiveMinimum, let maximum, let exclusiveMaximum, let multipleOf):
             return call(
-                "integer", access, path, location,
-                bounds(minimum, exclusiveMinimum, maximum, exclusiveMaximum, multipleOf), accumulator, indent
+                "integer",
+                bounds(minimum, exclusiveMinimum, maximum, exclusiveMaximum, multipleOf),
+                at: site
             )
         case .number(let minimum, let exclusiveMinimum, let maximum, let exclusiveMaximum, let multipleOf):
             return call(
-                "number", access, path, location,
-                bounds(minimum, exclusiveMinimum, maximum, exclusiveMaximum, multipleOf), accumulator, indent
+                "number",
+                bounds(minimum, exclusiveMinimum, maximum, exclusiveMaximum, multipleOf),
+                at: site
             )
         case .reference(let name):
-            // A call, not an expansion: this is what terminates on a recursive schema. Emitted only when
-            // the target actually asserts something, so this and `validationDeclaration` agree on which
-            // functions exist.
-            guard componentSchemas[name].map(carriesChecks) ?? false else { return "" }
-            return """
-                \(indent)\(schemaFunctionName(name))(
-                \(indent)    \(access), at: "\(path)", in: \(location), into: &\(accumulator)
-                \(indent))
-                """
+            return referenceCall(name, at: site)
         case .array(let minItems, let maxItems, let uniqueItems, let items):
-            var arguments: [String] = []
-            if let minItems { arguments.append("minItems: \(minItems)") }
-            if let maxItems { arguments.append("maxItems: \(maxItems)") }
-            if uniqueItems { arguments.append("uniqueItems: true") }
-            // The element closure gets its own accumulator parameter rather than capturing the outer one,
-            // which is `inout` and cannot be captured.
-            let element = checks(
-                for: items, access: "wireOpenAPIItem", path: "\\(wireOpenAPIItemPath)",
-                location: location, accumulator: "wireOpenAPIItemFailures", indent: indent + "        ",
+            return arrayCheck(minItems, maxItems, uniqueItems, items, at: site, patterns: &patterns)
+        case .object(let properties):
+            return objectChecks(properties, at: site, patterns: &patterns)
+        case .composed(let members):
+            return composedChecks(members, at: site, patterns: &patterns)
+        }
+    }
+
+    /// Patterns are pooled: one `_pN` constant per distinct expression, however many schemas use it.
+    private func stringCheck(
+        _ minLength: Int?,
+        _ maxLength: Int?,
+        _ pattern: String?,
+        at site: EmissionSite,
+        patterns: inout [String]
+    ) -> String {
+        var arguments: [String] = []
+        if let minLength { arguments.append("minLength: \(minLength)") }
+        if let maxLength { arguments.append("maxLength: \(maxLength)") }
+        if let pattern {
+            let index =
+                patterns.firstIndex(of: pattern)
+                ?? {
+                    patterns.append(pattern)
+                    return patterns.count - 1
+                }()
+            arguments.append("pattern: _p\(index)")
+        }
+        return call("string", arguments, at: site)
+    }
+
+    /// A call, not an expansion: this is what terminates on a recursive schema.
+    ///
+    /// Emitted only when the target actually asserts something, so this and `validationDeclaration` agree
+    /// on which functions exist — they used to disagree, and the output called one that was never
+    /// declared.
+    private func referenceCall(_ name: String, at site: EmissionSite) -> String {
+        guard componentSchemas[name].map(carriesChecks) ?? false else { return "" }
+        return """
+            \(site.indent)\(schemaFunctionName(name))(
+            \(site.indent)    \(site.access), at: "\(site.path)", in: \(site.location), \
+            into: &\(site.accumulator)
+            \(site.indent))
+            """
+    }
+
+    private func arrayCheck(
+        _ minItems: Int?,
+        _ maxItems: Int?,
+        _ uniqueItems: Bool,
+        _ items: SpecAssertions,
+        at site: EmissionSite,
+        patterns: inout [String]
+    ) -> String {
+        var arguments: [String] = []
+        if let minItems { arguments.append("minItems: \(minItems)") }
+        if let maxItems { arguments.append("maxItems: \(maxItems)") }
+        if uniqueItems { arguments.append("uniqueItems: true") }
+        let element = checks(for: items, at: site.element, patterns: &patterns)
+        guard !element.isEmpty else { return call("array", arguments, at: site) }
+        let joined = arguments.isEmpty ? "" : ", " + arguments.joined(separator: ", ")
+        return """
+            \(site.indent)WireOpenAPIValidate.array(
+            \(site.indent)    \(site.access), at: "\(site.path)", in: \(site.location)\(joined),
+            \(site.indent)    into: &\(site.accumulator),
+            \(site.indent)    element: { wireOpenAPIItem, wireOpenAPIItemPath, wireOpenAPIItemFailures in
+            \(element)
+            \(site.indent)    }
+            \(site.indent))
+            """
+    }
+
+    private func objectChecks(
+        _ properties: [SpecProperty],
+        at site: EmissionSite,
+        patterns: inout [String]
+    ) -> String {
+        properties.compactMap { property -> String? in
+            guard carriesChecks(property.assertions) else { return nil }
+            let member = GeneratorSafeNames.swiftMemberName(for: property.name, strategy: namingStrategy)
+            // Only *descending into an inline object* needs the chain: every other shape is passed to
+            // something that already takes an `Optional`, so a non-optional member promotes and an
+            // optional one is handled. This is the one place the document's `required:` list has to be
+            // right, and a disagreement is a compile error in the output rather than a silent miss.
+            let descends: Bool
+            switch property.assertions {
+            case .object, .composed: descends = true
+            default: descends = false
+            }
+            let access = "\(site.access).\(member)" + (descends && !property.isRequired ? "?" : "")
+            return checks(
+                for: property.assertions,
+                at: site.property(access: access, named: property.name),
                 patterns: &patterns
             )
-            guard !element.isEmpty else {
-                return call("array", access, path, location, arguments, accumulator, indent)
-            }
-            let joined = arguments.isEmpty ? "" : ", " + arguments.joined(separator: ", ")
-            return """
-                \(indent)WireOpenAPIValidate.array(
-                \(indent)    \(access), at: "\(path)", in: \(location)\(joined),
-                \(indent)    into: &\(accumulator),
-                \(indent)    element: { wireOpenAPIItem, wireOpenAPIItemPath, wireOpenAPIItemFailures in
-                \(element)
-                \(indent)    }
-                \(indent))
-                """
-        case .object(let properties):
-            return properties.compactMap { property -> String? in
-                guard carriesChecks(property.assertions) else { return nil }
-                let member = GeneratorSafeNames.swiftMemberName(for: property.name, strategy: namingStrategy)
-                // Only *descending into an inline object* needs the chain: every other shape is passed to
-                // something that already takes an `Optional`, so a non-optional member promotes and an
-                // optional one is handled. This is the one place the document's `required:` list has to be
-                // right, and a disagreement is a compile error in the output rather than a silent miss.
-                let descends: Bool
-                switch property.assertions {
-                case .object, .composed: descends = true
-                default: descends = false
-                }
-                let access = "\(access).\(member)" + (descends && !property.isRequired ? "?" : "")
-                return checks(
-                    for: property.assertions, access: access, path: "\(path).\(property.name)",
-                    location: location, accumulator: accumulator, indent: indent, patterns: &patterns
-                )
-            }
-            .joined(separator: "\n")
-        case .composed(let members):
-            // The path does **not** gain a segment. `value1`/`value2` are Swift artefacts with no wire
-            // counterpart — the generated `init(from:)` decodes every member from the same decoder — so a
-            // failure inside one belongs at the parent's path, which is where the caller can find it.
-            return members.compactMap { member -> String? in
-                guard carriesChecks(member.assertions) else { return nil }
-                return checks(
-                    for: member.assertions, access: "\(access).value\(member.index)", path: path,
-                    location: location, accumulator: accumulator, indent: indent, patterns: &patterns
-                )
-            }
-            .joined(separator: "\n")
         }
+        .joined(separator: "\n")
+    }
+
+    private func composedChecks(
+        _ members: [SpecComposedMember],
+        at site: EmissionSite,
+        patterns: inout [String]
+    ) -> String {
+        members.compactMap { member -> String? in
+            guard carriesChecks(member.assertions) else { return nil }
+            return checks(for: member.assertions, at: site.composedMember(member.index), patterns: &patterns)
+        }
+        .joined(separator: "\n")
     }
 
     private func bounds(
@@ -355,21 +459,13 @@ extension DirectDispatchEmitter {
         return arguments
     }
 
-    private func call(
-        _ kind: String,
-        _ access: String,
-        _ path: String,
-        _ location: String,
-        _ arguments: [String],
-        _ accumulator: String,
-        _ indent: String
-    ) -> String {
+    private func call(_ kind: String, _ arguments: [String], at site: EmissionSite) -> String {
         let joined = arguments.isEmpty ? "" : ", " + arguments.joined(separator: ", ")
         return """
-            \(indent)WireOpenAPIValidate.\(kind)(
-            \(indent)    \(access), at: "\(path)", in: \(location)\(joined),
-            \(indent)    into: &\(accumulator)
-            \(indent))
+            \(site.indent)WireOpenAPIValidate.\(kind)(
+            \(site.indent)    \(site.access), at: "\(site.path)", in: \(site.location)\(joined),
+            \(site.indent)    into: &\(site.accumulator)
+            \(site.indent))
             """
     }
 }
@@ -383,84 +479,5 @@ extension DirectDispatchEmitter {
         guard !requestAssertions(for: operation).isEmpty else { return "" }
         let member = GeneratorSafeNames.swiftMemberName(for: operation.operationID, strategy: namingStrategy)
         return "\(indent)try \(validationEnum).\(member)(input)\n"
-    }
-}
-
-// MARK: - diagnostics
-
-extension DirectDispatchEmitter {
-    /// An assertion this adapter cannot check is a build error, not a silent omission.
-    ///
-    /// The rule is the one `diagnoseMappingForm` already applies to responses: where the document asks for
-    /// something the adapter cannot construct, say so rather than quietly doing nothing. A document that
-    /// declares `minLength` and gets no enforcement is the exact failure this capability exists to remove,
-    /// so producing it *silently* would be worse than the gap it replaces.
-    ///
-    /// **Keyed on request-reachability, not on the schema.** A `Components.Schemas.Task` is routinely both
-    /// a request body and a response body, and response validation is not switched on — so failing a build
-    /// over a constraint reachable only from a response would fail it for a feature nobody enabled. The
-    /// walk therefore starts at each operation's *request* surface. Turning response validation on later
-    /// widens the walk, and may legitimately turn a passing build into a failing one.
-    func diagnoseParameterAssertions() {
-        for (_, entry) in byOperationID.sorted(by: { $0.key < $1.key }) {
-            var visited: Set<String> = []
-            for root in requestRoots(for: entry.operation) {
-                diagnose(root.node, at: root.path, of: entry.operation, visited: &visited)
-            }
-        }
-    }
-
-    private func diagnose(
-        _ node: SpecAssertions,
-        at path: String,
-        of operation: DiscoveredOperation,
-        visited: inout Set<String>
-    ) {
-        switch node {
-        case .none, .integer, .number:
-            return
-        case .array(_, _, _, let items):
-            diagnose(items, at: "\(path)[]", of: operation, visited: &visited)
-        case .object(let properties):
-            for property in properties {
-                diagnose(
-                    property.assertions, at: "\(path).\(property.name)", of: operation, visited: &visited
-                )
-            }
-        case .composed(let members):
-            // Reported at the parent's path, because that is where the caller would see it — `value1` has
-            // no wire counterpart.
-            for member in members { diagnose(member.assertions, at: path, of: operation, visited: &visited) }
-        case .reference(let name):
-            // Once per schema per operation: a schema reached from three properties has one problem, not
-            // three, and a recursive one would otherwise not terminate.
-            guard visited.insert(name).inserted else { return }
-            componentSchemas[name].map { diagnose($0, at: path, of: operation, visited: &visited) }
-        case .unrepresentable(let keywords, let reason):
-            fail(
-                """
-                '\(path)' in the request of '\(operation.operationID)' declares \
-                \(keywords.joined(separator: ", ")), which this adapter cannot check \
-                because \(reason). Remove it from the document, or check it in the handler. @RawOperation is \
-                not an escape — validation is emitted for those too, from the same document.
-                """,
-                at: operation
-            )
-        case .string(_, _, let pattern):
-            guard let pattern else { return }
-            // Compiled with the same engine the runtime will use, so agreement is by construction rather
-            // than by hope — and an unreadable expression fails the build here instead of trapping in
-            // `WireOpenAPIPattern.init` on the first request that reaches it.
-            guard (try? Regex(pattern)) == nil else { return }
-            fail(
-                """
-                '\(path)' in the request of '\(operation.operationID)' declares \
-                `pattern: \(pattern)`, which Swift's regular-expression engine cannot compile. JSON Schema \
-                patterns are ECMA-262; most translate directly, but this one does not. Rewrite it, or \
-                remove it and check it in the handler.
-                """,
-                at: operation
-            )
-        }
     }
 }
