@@ -44,3 +44,13 @@ components:
           type: string
         item:
           type: string
+        # Recursive by $ref, and deliberately so: this is ordinary OpenAPI, swift-openapi-generator
+        # supports it outright (it detects the cycle and boxes the type), and it used to fail this
+        # adapter's document loading with "a reference that could not be resolved" — because
+        # `locallyDereferenced()` resolves schema references too, and a cycle cannot be resolved that
+        # way. Nothing in the codegen reads schemas, so references are now followed one hop at a time
+        # only where they are read. Keeping a recursive schema here means a regression fails the build.
+        relatedOrders:
+          type: array
+          items:
+            $ref: '#/components/schemas/Order'

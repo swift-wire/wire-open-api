@@ -47,7 +47,7 @@ enum ServerPrefix {
 }
 
 /// Resolve the prefix, or exit with a diagnostic when the document's servers disagree.
-func resolveServerPrefix(document: OpenAPIKit.DereferencedDocument?, path: String) -> ServerPrefix {
+func resolveServerPrefix(document: OpenAPIKit.OpenAPI.Document?, path: String) -> ServerPrefix {
     guard let document else { return .none }
     let prefixes = document.serverPathPrefixes
     guard !prefixes.isEmpty else { return .none }
