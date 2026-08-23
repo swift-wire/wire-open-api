@@ -208,7 +208,7 @@ extension DirectDispatchEmitter {
     ) -> String? {
         var seen: Set<String> = []
         let mappings = (operation.errorMappings + controller.errorMappings)
-            .filter(\.isTerminalScoped)
+            .filter(\.arrivesAtTerminal)
             .filter { seen.insert($0.errorType).inserted }
         guard !mappings.isEmpty else { return nil }
         let clauses = mappings.map { mapping -> String in

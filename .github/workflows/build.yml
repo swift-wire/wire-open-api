@@ -211,8 +211,18 @@ jobs:
           # `WireMVCBindingError` already draws, now reached from both sides. And `Task` is recursive, so
           # the second probe fails two levels down: a `$ref` is emitted as a call to the schema's own
           # validator, which is what terminates on a cycle and what makes the indexed path possible.
+          # `createTask` carries one @ErrorResponse on the validation error, and it has to answer both
+          # sides of the decode seam: a body the *deserializer* refused (a missing required property,
+          # which never reaches the forwarder) and one a *generated check* refused (an empty title,
+          # which does). Same mapping, same answer, two entirely different paths to it.
           assertBody=$(curl -s -w ' [%{http_code}]' -X POST -H 'Content-Type: application/json' \
             -d '{"id":"x","title":""}' "http://127.0.0.1:8080/api/v1/tasks/new?title=t")
+          assertDecodeSeam=$(curl -s -w ' [%{http_code}]' -X POST -H 'Content-Type: application/json' \
+            -d '{"id":"x"}' "http://127.0.0.1:8080/api/v1/tasks/new?title=t")
+          # And where nothing maps it, the converted default still names the field — a decode rejection
+          # used to answer 400 with an empty body, telling the caller nothing.
+          assertUnmappedBody=$(curl -s -w ' [%{http_code}]' -X POST -H 'Content-Type: application/json' \
+            -d '{"id":"x","title":""}' "http://127.0.0.1:8080/api/v1/tasks/9/replace?title=t")
           assertNested=$(curl -s -w ' [%{http_code}]' -X POST -H 'Content-Type: application/json' \
             -d '{"id":"x","title":"ok","subtasks":[{"id":"y","title":"fine"},{"id":"z","title":""}]}' \
             "http://127.0.0.1:8080/api/v1/tasks/new?title=t")
@@ -382,11 +392,17 @@ jobs:
             *) echo "an unmapped schema violation did not answer 400 with its failures ($assertUnmapped)"; exit 1;;
           esac
           case "$(plain "$assertBody")" in
-            *'"path":"body.title"'*"[422]") ;;
-            *) echo "a body violation did not answer 422 ($assertBody)"; exit 1;;
+            *'"message":"rejected: body.title"'*"[422]") ;;
+            *) echo "a body violation did not answer its mapping ($assertBody)"; exit 1;;
+          esac
+          [ "$(plain "$assertDecodeSeam")" = "$(plain "$assertBody")" ] \
+            || { echo "the two sides of the decode seam answered differently ($assertDecodeSeam)"; exit 1; }
+          case "$(plain "$assertUnmappedBody")" in
+            *'"keyword":"minLength"'*'"path":"body.title"'*"[422]") ;;
+            *) echo "an unmapped body violation lost its detail ($assertUnmappedBody)"; exit 1;;
           esac
           case "$(plain "$assertNested")" in
-            *'"path":"body.subtasks[1].title"'*"[422]") ;;
+            *'"message":"rejected: body.subtasks[1].title"'*"[422]") ;;
             *) echo "a violation inside a recursive schema was not found or not named ($assertNested)"; exit 1;;
           esac
           grep -q '^deleted: 7' serverlog.txt \

@@ -141,8 +141,9 @@ struct DirectDispatchEmitter {
             \(indent)try await WireOpenAPIRoutes.invoke(
             \(indent)    handler: wireOpenAPIHandler, request: request, pathParameters: parameters,
             \(indent)    reader: reader,
-            \(indent)    sender: ResponseHeaderApplyingSender(wrapping: sender, registry: wireOpenAPIRegistry)\(rejection.isEmpty ? "" : ",")
-            \(rejection)\(indent))
+            \(indent)    sender: ResponseHeaderApplyingSender(wrapping: sender, registry: wireOpenAPIRegistry),
+            \(rejection)\(indent)    operationID: "\(operation.operationID)"
+            \(indent))
             """
         // This operation's controller is app-scoped: nothing about its dispatch varies per request, so the
         // server built at registration is used as-is — even when a sibling controller is request-scoped.

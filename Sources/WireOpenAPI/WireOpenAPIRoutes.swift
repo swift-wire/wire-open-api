@@ -36,6 +36,8 @@ public enum WireOpenAPIRoutes {
         reader: consuming Reader,
         sender: consuming Sender,
         rejectionResponse: @escaping @Sendable (any Error) -> (HTTPResponse, HTTPBody?)? = { _ in nil },
+        /// Named on the failure a rejected body produces, so a caller sees which operation refused it.
+        operationID: String = "",
         maximumBodySize: Int = 1_000_000
     ) async throws
     where
@@ -47,6 +49,7 @@ public enum WireOpenAPIRoutes {
             Terminal(
                 handler: handler,
                 rejectionResponse: rejectionResponse,
+                operationID: operationID,
                 maximumBodySize: maximumBodySize
             ),
             request: request,
@@ -66,6 +69,7 @@ public enum WireOpenAPIRoutes {
         /// The generated witness's `@ErrorResponse` mappings for errors only matchable out here. Carried
         /// with the handler because it is part of what this route does, not a knob on how it is invoked.
         let rejectionResponse: @Sendable (any Error) -> (HTTPResponse, HTTPBody?)?
+        let operationID: String
         let maximumBodySize: Int
     }
 
@@ -120,8 +124,27 @@ public enum WireOpenAPIRoutes {
             // Then the runtime's own mapping, via `HTTPResponseConvertible`, which `ServerError` conforms
             // to. Anything else propagates, leaving errors the *handler* threw to the mappings emitted
             // inside the forwarder, which have already had their turn.
+            // The author's own mappings first, against the error exactly as it arrived: an
+            // `@ErrorResponse(DecodingError.self, …)` has always matched here and still does.
             if let mapped = terminal.rejectionResponse(error) {
                 (response, responseBody) = mapped
+            } else if let rejected = WireOpenAPIRequestValidationError(
+                decoding: (error as? ServerError)?.underlyingError ?? error,
+                operationID: terminal.operationID
+            ) {
+                // A body the deserializer refused. Answered as the same failure a generated validator
+                // produces — 422 with a list of what was wrong — rather than as the runtime's bare 400
+                // with no body, which told the caller nothing. A mapping of the validation type gets its
+                // turn first, so one `@ErrorResponse` can cover both sides of the seam.
+                if let mapped = terminal.rejectionResponse(rejected) {
+                    (response, responseBody) = mapped
+                } else {
+                    response = HTTPResponse(
+                        status: rejected.httpStatus,
+                        headerFields: rejected.httpHeaderFields
+                    )
+                    responseBody = rejected.httpBody
+                }
             } else if let convertible = error as? any HTTPResponseConvertible {
                 response = HTTPResponse(status: convertible.httpStatus, headerFields: convertible.httpHeaderFields)
                 responseBody = convertible.httpBody

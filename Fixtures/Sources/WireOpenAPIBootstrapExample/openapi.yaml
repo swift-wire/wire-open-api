@@ -84,7 +84,14 @@ paths:
         # Declared so the DecodingError mapping has a documented case to construct *inside* the
         # forwarder. Without it the mapping still answers, from the terminal — the difference is only
         # which side of the generator the response is built on.
-        '422': { description: Could not decode }
+        # Now carries a body: one @ErrorResponse on the validation error answers both a body the
+        # deserializer refused and one a generated check refused, so the response has to be able to say
+        # which field was at fault.
+        '422':
+          description: The request does not satisfy the document
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '201':
           description: Created
           content:
