@@ -200,6 +200,21 @@ func controller(
 
 let problemBody = #"{ _ in Components.Schemas.Problem(message: "x") }"#
 
+/// A document whose single operation *returns* the given schema. The mirror of `bodyDocument`, for the
+/// diagnostics that only apply to what a handler produces.
+func responseDocument(_ schema: String) -> String {
+    """
+    openapi: 3.1.0
+    info: { title: Gate, version: 1.0.0 }
+    paths:
+      /opA:
+        get:
+          operationId: opA
+          responses:
+            '200': { description: ok, content: { application/json: { schema: \(schema) } } }
+    """
+}
+
 /// A document whose single operation takes a JSON request body with the given schema, written in YAML
 /// flow style so it stays on one line — the same shape `parameterDocument` uses, and one less thing to
 /// get wrong than block indentation inside a Swift multiline literal.
@@ -242,6 +257,9 @@ struct Gate {
     let summary: String
     let document: String
     let controller: String
+    /// The contents of a `wire-openapi.yaml` beside the document, when the case needs one. Nil means the
+    /// file is absent, which is how a document says nothing and takes every default.
+    var settings: String?
 }
 
 let gates: [Gate] = [
@@ -388,6 +406,23 @@ let gates: [Gate] = [
         ),
         controller: controller(raw: true, operations: [("opA", [])])
     ),
+    // Slice 5, and the pair is the point: the *same* document, differing only by whether
+    // `wire-openapi.yaml` asks for responses to be checked. Together they gate the request-reachability
+    // rule in both directions — a constraint reachable only from a response must fail the build for
+    // someone who asked for the check, and must not for anyone who did not.
+    Gate(
+        name: "responses/unrepresentable-when-responses-are-checked",
+        summary: "turning response validation on widens the walk, and may turn a passing build failing",
+        document: responseDocument("{ type: object, minProperties: 2, properties: { a: { type: string } } }"),
+        controller: controller(raw: true, operations: [("opA", [])]),
+        settings: "validatesResponses: true\n"
+    ),
+    Gate(
+        name: "responses/unrepresentable-when-they-are-not",
+        summary: "the same document builds when nobody asked for the check — the other half of the rule",
+        document: responseDocument("{ type: object, minProperties: 2, properties: { a: { type: string } } }"),
+        controller: controller(raw: true, operations: [("opA", [])])
+    ),
     // The one accept case, and it earns its place: it is the arrangement the "disagree" message tells the
     // author to move to. A diagnostic whose advice does not work is worse than no diagnostic.
     Gate(
@@ -431,15 +466,23 @@ func run(_ gate: Gate) -> String {
             atomically: true,
             encoding: .utf8
         )
+        if let settings = gate.settings {
+            try settings.write(
+                to: workDirectory.appendingPathComponent("wire-openapi.yaml"),
+                atomically: true,
+                encoding: .utf8
+            )
+        }
     } catch { fail("cannot lay out the case '\(gate.name)': \(error)") }
 
     let process = Process()
     process.executableURL = generatorBinary
     process.currentDirectoryURL = workDirectory
-    process.arguments = [
-        "out.swift", "--spec", "openapi.yaml", "--spec-config", "config.yaml",
-        "--module", "Gate", "Controller.swift",
-    ]
+    // The settings flag only when the case wrote the file, so "absent" is exercised as well as "off".
+    process.arguments =
+        ["out.swift", "--spec", "openapi.yaml", "--spec-config", "config.yaml"]
+        + (gate.settings == nil ? [] : ["--spec-settings", "wire-openapi.yaml"])
+        + ["--module", "Gate", "Controller.swift"]
     let errors = Pipe()
     process.standardOutput = FileHandle.nullDevice
     process.standardError = errors

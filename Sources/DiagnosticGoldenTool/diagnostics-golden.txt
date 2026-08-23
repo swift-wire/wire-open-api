@@ -61,6 +61,14 @@ rejected: Controller.swift:10: error: 'body' in the request of 'opA' declares `m
 # the generator emits a oneOf as an enum whose case names this adapter does not derive, so an assertion underneath one is refused rather than guessed at
 rejected: Controller.swift:10: error: 'body' in the request of 'opA' declares assertions beneath member 1, which this adapter cannot check because the generator emits a oneOf/anyOf as an enum whose case names this adapter does not derive. Remove it from the document, or check it in the handler. @RawOperation is not an escape — validation is emitted for those too, from the same document.
 
+## responses/unrepresentable-when-responses-are-checked
+# turning response validation on widens the walk, and may turn a passing build failing
+rejected: Controller.swift:10: error: 'body' in the 200 response of 'opA' declares `minProperties`, which this adapter cannot check because a generated struct has a fixed set of members and no runtime property count. Remove it from the document, or check it in the handler. @RawOperation is not an escape — validation is emitted for those too, from the same document.
+
+## responses/unrepresentable-when-they-are-not
+# the same document builds when nobody asked for the check — the other half of the rule
+accepted
+
 ## accepted/per-operation-forms-are-the-remedy-for-disagreement
 # each operation takes the form its own documented response requires
 accepted

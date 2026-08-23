@@ -24,14 +24,35 @@ extension DirectDispatchEmitter {
         for (_, entry) in byOperationID.sorted(by: { $0.key < $1.key }) {
             var visited: Set<String> = []
             for root in requestRoots(for: entry.operation) {
-                diagnose(root.node, at: root.path, of: entry.operation, visited: &visited)
+                diagnose(
+                    root.node,
+                    at: "the request of",
+                    subject: root.path,
+                    of: entry.operation,
+                    visited: &visited
+                )
+            }
+            // Responses only when the document's `wire-openapi.yaml` asks for them to be checked.
+            // `responseRoots` is empty otherwise, which is the whole of the request-reachability rule:
+            // a constraint reachable only from a response must not fail a build for a check nobody
+            // switched on. Turning it on widens this walk, and may legitimately turn a passing build
+            // into a failing one.
+            for root in responseRoots(for: entry.operation) {
+                diagnose(
+                    root.node,
+                    at: "the \(root.code) response of",
+                    subject: "body",
+                    of: entry.operation,
+                    visited: &visited
+                )
             }
         }
     }
 
     private func diagnose(
         _ node: SpecAssertions,
-        at path: String,
+        at side: String,
+        subject path: String,
         of operation: DiscoveredOperation,
         visited: inout Set<String>
     ) {
@@ -39,12 +60,13 @@ extension DirectDispatchEmitter {
         case .none, .integer, .number:
             return
         case .array(_, _, _, let items):
-            diagnose(items, at: "\(path)[]", of: operation, visited: &visited)
+            diagnose(items, at: side, subject: "\(path)[]", of: operation, visited: &visited)
         case .object(let properties):
             for property in properties {
                 diagnose(
                     property.assertions,
-                    at: "\(path).\(property.name)",
+                    at: side,
+                    subject: "\(path).\(property.name)",
                     of: operation,
                     visited: &visited
                 )
@@ -52,16 +74,20 @@ extension DirectDispatchEmitter {
         case .composed(let members):
             // Reported at the parent's path, because that is where the caller would see it — `value1` has
             // no wire counterpart.
-            for member in members { diagnose(member.assertions, at: path, of: operation, visited: &visited) }
+            for member in members {
+                diagnose(member.assertions, at: side, subject: path, of: operation, visited: &visited)
+            }
         case .reference(let name):
             // Once per schema per operation: a schema reached from three properties has one problem, not
             // three, and a recursive one would otherwise not terminate.
             guard visited.insert(name).inserted else { return }
-            componentSchemas[name].map { diagnose($0, at: path, of: operation, visited: &visited) }
+            componentSchemas[name].map {
+                diagnose($0, at: side, subject: path, of: operation, visited: &visited)
+            }
         case .unrepresentable(let keywords, let reason):
             fail(
                 """
-                '\(path)' in the request of '\(operation.operationID)' declares \
+                '\(path)' in \(side) '\(operation.operationID)' declares \
                 \(keywords.joined(separator: ", ")), which this adapter cannot check \
                 because \(reason). Remove it from the document, or check it in the handler. @RawOperation is \
                 not an escape — validation is emitted for those too, from the same document.
@@ -76,7 +102,7 @@ extension DirectDispatchEmitter {
             guard (try? Regex(pattern)) == nil else { return }
             fail(
                 """
-                '\(path)' in the request of '\(operation.operationID)' declares \
+                '\(path)' in \(side) '\(operation.operationID)' declares \
                 `pattern: \(pattern)`, which Swift's regular-expression engine cannot compile. JSON Schema \
                 patterns are ECMA-262; most translate directly, but this one does not. Rewrite it, or \
                 remove it and check it in the handler.

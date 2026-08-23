@@ -142,6 +142,13 @@ jobs:
           # The second document, under its own `servers:` prefix, from its own module.
           order=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/api/v2/orders/7)
           order2=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/api/v2/orders/9)
+          # The *other* blame. OrdersAPI turns response validation on in its own `wire-openapi.yaml`,
+          # and `Order.item` is bounded — this id makes the handler exceed it. The service broke its own
+          # contract, so it is a 500 with **no body**: the caller did nothing wrong and is told nothing
+          # of the internals. The app's own document leaves the setting off, which the untouched Tasks
+          # assertions above are the evidence for — the setting is per document, not per process.
+          badResponse=$(curl -s -o /dev/null -w '%{http_code}:%{size_download}' \
+            http://127.0.0.1:8080/api/v2/orders/toolong)
           # One document's prefix must not serve the other's operation.
           crossed=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/v1/orders/7)
           # The half of the Orders document implemented in *this* target, naming its types qualified
@@ -320,6 +327,8 @@ jobs:
             *) echo "the second spec's request-scoped subject did not follow the request"; exit 1;;
           esac
           [ "$crossed" = 404 ] || { echo "one document's prefix served the other's operation"; exit 1; }
+          [ "$badResponse" = "500:0" ] \
+            || { echo "a contract-violating response was not answered 500 with no body ($badResponse)"; exit 1; }
           grep -q '^scope: order trace for /api/v2/orders/7' serverlog.txt \
             || { echo "the second spec's request scope was not entered"; exit 1; }
           # Middleware belongs to the controller that declared it, and nothing in OrdersAPI declares any.

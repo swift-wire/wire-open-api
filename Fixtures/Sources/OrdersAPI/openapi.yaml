@@ -44,6 +44,10 @@ components:
           type: string
         item:
           type: string
+          # Checked on the way *out*, because this document turns response validation on. A handler
+          # returning something longer has broken its own contract: that is a 500, and not the caller's
+          # problem to hear about.
+          maxLength: 60
         # Recursive by $ref, and deliberately so: this is ordinary OpenAPI, swift-openapi-generator
         # supports it outright (it detects the cycle and boxes the type), and it used to fail this
         # adapter's document loading with "a reference that could not be resolved" — because
