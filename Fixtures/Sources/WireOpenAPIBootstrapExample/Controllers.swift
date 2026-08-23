@@ -117,7 +117,6 @@ struct TaskController<Store: TaskStoring> {
 // handler is ever called, so no clause inside it could see this. `DecodingError` is the standard
 // library's, which is why it needs no vocabulary of ours — and mapping it here answers 422 where the
 // runtime's own default is 400.
-@ErrorResponse(DecodingError.self, .unprocessableContent)
 struct TaskListController<Store: TaskStoring> {
     @Inject let store: Store
 
@@ -161,7 +160,18 @@ struct TaskListController<Store: TaskStoring> {
     /// so which response the handler builds needs no saying, and the shim emits `.created(…)`.
     /// A **required** request body, decoded by the generator and handed over as the schema type. The
     /// handler never names `Operations.CreateTask.Input.Body`.
+    /// One mapping, both sides of the decode seam. A body the *deserializer* refused never reached the
+    /// forwarder, and a `minLength` violation on the same schema did — but both now arrive as the same
+    /// error, so this covers each. What still differs is only where the answer is built: at the terminal
+    /// the response is assembled directly, and inside the forwarder it is one of the document's own.
     @Operation
+    @ErrorResponse(
+        WireOpenAPIRequestValidationError.self,
+        .unprocessableContent,
+        { error in
+            Components.Schemas.Problem(message: "rejected: \(error.failures.map(\.path).joined(separator: ", "))")
+        }
+    )
     func createTask(
         @Query("title") title: String,
         @JSONBody draft: Components.Schemas.Task
@@ -197,8 +207,18 @@ struct TaskListController<Store: TaskStoring> {
 
     /// **Two** documented successes, so the document cannot say which one this handler returns and the
     /// author has to. `@JSONResponse` is WireMVC's own, like the parameter wrappers.
+    /// The **older** way to reach a decode rejection, kept because it still works and still wins: an
+    /// explicit `DecodingError` mapping matches by type before the conversion happens, so an author who
+    /// wants the deserializer's own failure handled separately still can. `createTask` above shows the
+    /// other arrangement — one validation mapping covering both sides — which is what the conversion
+    /// makes possible.
     @Operation
     @JSONResponse(status: .created)
+    @ErrorResponse(
+        DecodingError.self,
+        .unprocessableContent,
+        { _ in Components.Schemas.Problem(message: "could not decode") }
+    )
     func replaceTask(
         @Path id: String,
         @Query("title") title: String,

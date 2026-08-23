@@ -229,3 +229,80 @@ private func encodedBody(failures: [WireOpenAPIFailure], truncated: Bool) -> HTT
     guard let data = try? encoder.encode(payload) else { return nil }
     return HTTPBody([UInt8](data))
 }
+
+// MARK: - the decode-time seam
+
+extension WireOpenAPIRequestValidationError {
+    /// A body the *deserializer* rejected, expressed as the same failure a generated validator produces.
+    ///
+    /// Four things the document says about a body are enforced before the forwarder is ever entered, by
+    /// the generated `init(from:)` rather than by anything here: `required`, each property's type,
+    /// `additionalProperties: false`, and JSON being JSON at all. A `minLength` on the same schema is
+    /// checked one step later. Left alone the two answer differently — 400 with an **empty body** for the
+    /// first four, 422 with a list of what was wrong for the last — so a caller learns nothing from the
+    /// more basic mistake and everything from the subtler one.
+    ///
+    /// Converting closes that. It also costs nothing in detail: there was none to lose, since the
+    /// runtime's own answer carries no body at all, and a `DecodingError`'s `codingPath` is exactly the
+    /// path a failure wants. 422 rather than 400 is not a new opinion either —
+    /// `WireMVCBindingError.malformedBody` already answers 422 for a body it could not parse, so this is
+    /// the two adapters agreeing rather than this one inventing a rule.
+    ///
+    /// What it cannot change is *where a mapping can be written*: the forwarder was never entered, so
+    /// there is no `Output` to construct and no documented response to answer with. That part of the seam
+    /// is structural.
+    public init?(decoding error: any Error, operationID: String) {
+        guard let decoding = error as? DecodingError else { return nil }
+        let failure: WireOpenAPIFailure
+        switch decoding {
+        case .keyNotFound(let key, let context):
+            failure = WireOpenAPIFailure(
+                path: Self.path(context.codingPath + [key]),
+                keyword: "required",
+                expected: key.stringValue,
+                location: .body
+            )
+        case .valueNotFound(let type, let context):
+            failure = WireOpenAPIFailure(
+                path: Self.path(context.codingPath),
+                keyword: "required",
+                expected: "\(type)",
+                actual: "null",
+                location: .body
+            )
+        case .typeMismatch(let type, let context):
+            failure = WireOpenAPIFailure(
+                path: Self.path(context.codingPath),
+                keyword: "type",
+                expected: "\(type)",
+                location: .body
+            )
+        case .dataCorrupted(let context):
+            // Where `additionalProperties: false` lands, and where malformed JSON lands. The debug
+            // description is the only thing that distinguishes them and it is the decoder's wording, so
+            // it is reported as-is rather than guessed at.
+            failure = WireOpenAPIFailure(
+                path: Self.path(context.codingPath),
+                keyword: "invalid",
+                expected: context.debugDescription,
+                location: .body
+            )
+        @unknown default:
+            failure = WireOpenAPIFailure(
+                path: "body",
+                keyword: "invalid",
+                expected: "a decodable body",
+                location: .body
+            )
+        }
+        self.init(operationID: operationID, failures: [failure], truncated: false)
+    }
+
+    /// A `codingPath` rendered the way a generated validator renders one: `body.items[3].name`, with
+    /// array indices in brackets rather than as segments.
+    private static func path(_ codingPath: [any CodingKey]) -> String {
+        codingPath.reduce("body") { rendered, key in
+            key.intValue.map { "\(rendered)[\($0)]" } ?? "\(rendered).\(key.stringValue)"
+        }
+    }
+}

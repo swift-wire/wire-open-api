@@ -96,6 +96,20 @@ struct ErrorMapping {
     /// alternative is emitting the same mapping at both sites, which makes generated code hard to read.
     var isTerminalScoped: Bool { ["DecodingError", "Error", "Swift.Error"].contains(errorType) }
 
+    /// Whether this error can reach the **terminal** — a rejection the forwarder never saw.
+    ///
+    /// A superset of `isTerminalScoped`, and the two are different questions that used to share an
+    /// answer. `isTerminalScoped` also *exempts* a mapping from naming a documented status, which is right
+    /// for a `DecodingError`: the request never became this operation's `Input`, so its responses do not
+    /// describe the outcome. It is wrong for `WireOpenAPIRequestValidationError`, which arrives at both
+    /// sites — thrown by a generated validator inside the forwarder, where it constructs one of the
+    /// document's own responses and must name a declared status, *and* produced at the terminal when the
+    /// deserializer refused the body. Conflating them would have quietly dropped the must-be-documented
+    /// rule for every validation mapping.
+    var arrivesAtTerminal: Bool {
+        isTerminalScoped || errorType == "WireOpenAPIRequestValidationError"
+    }
+
     /// A catch-all matches every error, so nothing after it can run.
     var isCatchAll: Bool { ["Error", "Swift.Error"].contains(errorType) }
 }
