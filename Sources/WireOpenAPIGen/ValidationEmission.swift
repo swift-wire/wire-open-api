@@ -25,11 +25,55 @@ import WireOpenAPINaming
 extension DirectDispatchEmitter {
     var validationEnum: String { "Validation" }
 
+    /// Every `pattern` this spec will emit, in a stable order, so `_p0`/`_p1` mean the same thing at
+    /// every emission site.
+    ///
+    /// Computed once rather than accumulated while emitting: response checks are emitted from the
+    /// *forwarder*, which is a different traversal from the one that declares the constants, and an
+    /// index handed out by one would mean nothing to the other. Walking twice is free — this is a
+    /// build-time list of strings.
+    var patternPool: [String] {
+        var found: [String] = []
+        var visitedSchemas: Set<String> = []
+        func walk(_ node: SpecAssertions) {
+            switch node {
+            case .string(_, _, let pattern):
+                if let pattern, !found.contains(pattern) { found.append(pattern) }
+            case .array(_, _, _, let items): walk(items)
+            case .object(let properties): properties.forEach { walk($0.assertions) }
+            case .composed(let members): members.forEach { walk($0.assertions) }
+            case .reference(let name):
+                guard visitedSchemas.insert(name).inserted else { return }
+                componentSchemas[name].map(walk)
+            case .none, .integer, .number, .unrepresentable: return
+            }
+        }
+        for operationID in operationRoutes.keys.sorted() {
+            guard let entry = byOperationID[operationID] else { continue }
+            requestRoots(for: entry.operation).forEach { walk($0.node) }
+            responseRoots(for: entry.operation).forEach { walk($0.node) }
+        }
+        return found
+    }
+
+    /// The documented responses this operation can construct that assert something — empty unless
+    /// `wire-openapi.yaml` asks for response validation.
+    func responseRoots(for operation: DiscoveredOperation) -> [(code: Int, node: SpecAssertions)] {
+        guard settings.validatesResponses else { return [] }
+        return (operationRoutes[operation.operationID]?.responses ?? [])
+            .map { (code: $0.code, node: $0.assertions) }
+    }
+
     /// The operations of this spec that assert anything, in a stable order.
     var validatedOperations: [(controller: DiscoveredController, operation: DiscoveredOperation)] {
         byOperationID.sorted { $0.key < $1.key }
             .map(\.value)
-            .filter { !requestAssertions(for: $0.operation).isEmpty }
+            // Response roots count too: an operation whose *only* assertions are on what it returns
+            // still needs the enum to exist, because its response check calls a validator declared there.
+            .filter {
+                !requestAssertions(for: $0.operation).isEmpty
+                    || responseRoots(for: $0.operation).contains { carriesChecks($0.node) }
+            }
     }
 
     /// Every root of an operation's *request*: its parameters, and its JSON body — unfiltered.
@@ -83,7 +127,13 @@ extension DirectDispatchEmitter {
             case .none, .string, .integer, .number, .unrepresentable: return
             }
         }
-        for (_, entry) in byOperationID { requestAssertions(for: entry.operation).forEach { walk($0.node) } }
+        for (_, entry) in byOperationID {
+            requestAssertions(for: entry.operation).forEach { walk($0.node) }
+            // Responses too, when they are checked: a schema reachable only from a response still needs
+            // its validator emitted, or the response check calls a function nobody declared. The same
+            // trap the request side hit, arriving from the other direction.
+            responseRoots(for: entry.operation).forEach { walk($0.node) }
+        }
         return visited.sorted()
     }
 
@@ -131,12 +181,15 @@ extension DirectDispatchEmitter {
     func validationDeclaration() -> String? {
         let operations = validatedOperations
         guard !operations.isEmpty else { return nil }
-        var patterns: [String] = []
+        // Only operations with *request* assertions get an entry point; the rest are here solely so the
+        // schema validators their response checks call are declared.
+        let entryPoints = operations.filter { !requestAssertions(for: $0.operation).isEmpty }
+        let pool = patternPool
         let schemas = reachableSchemas()
             .filter { componentSchemas[$0].map(carriesChecks) ?? false }
-            .map { schemaValidator($0, patterns: &patterns) }
-        let functions = operations.map { operationValidator($0.operation, patterns: &patterns) }
-        let constants = patterns.enumerated()
+            .map { schemaValidator($0, pool: pool) }
+        let functions = entryPoints.map { operationValidator($0.operation, pool: pool) }
+        let constants = pool.enumerated()
             .map { "    static let _p\($0.offset) = WireOpenAPIPattern(#\"\($0.element)\"#)" }
         return """
             /// Assertions this document makes that the generator does not enforce, checked before the
@@ -153,11 +206,11 @@ extension DirectDispatchEmitter {
     /// Takes an `Optional` so a caller never has to unwrap, and guards on nil so the body can walk members
     /// directly. The `isFull` guard is what stops a huge nested payload from walking after the failure cap
     /// has already been reached.
-    private func schemaValidator(_ name: String, patterns: inout [String]) -> String {
+    private func schemaValidator(_ name: String, pool: [String]) -> String {
         let body = checks(
             for: componentSchemas[name] ?? .none,
             at: EmissionSite(access: "value", path: "\\(path)", location: "location", indent: "        "),
-            patterns: &patterns
+            pool: pool
         )
         // `location` is a parameter, not a literal: the same component schema can be reached from a
         // request body *and* from a `$ref`'d parameter schema, and the two earn different statuses — 422
@@ -176,7 +229,7 @@ extension DirectDispatchEmitter {
     }
 
     /// One operation's entry point: its parameters, then its body, then the throw.
-    private func operationValidator(_ operation: DiscoveredOperation, patterns: inout [String]) -> String {
+    private func operationValidator(_ operation: DiscoveredOperation, pool: [String]) -> String {
         let member = GeneratorSafeNames.swiftMemberName(for: operation.operationID, strategy: namingStrategy)
         var blocks: [String] = []
         for parameter in operationRoutes[operation.operationID]?.parameters ?? []
@@ -190,7 +243,7 @@ extension DirectDispatchEmitter {
                         location: ".\(parameter.location.rawValue)",
                         indent: "        "
                     ),
-                    patterns: &patterns
+                    pool: pool
                 )
             )
         }
@@ -208,7 +261,7 @@ extension DirectDispatchEmitter {
             blocks.append(
                 """
                         if case \(pattern) = input.body {
-                \(checks(for: body.assertions, at: bodySite, patterns: &patterns))
+                \(checks(for: body.assertions, at: bodySite, pool: pool))
                         }
                 """
             )
@@ -252,19 +305,26 @@ struct EmissionSite {
     let location: String
     let accumulator: String
     let indent: String
+    /// What to prefix a schema validator's name with.
+    ///
+    /// Empty inside the `Validation` enum, where a sibling resolves bare. Response checks are emitted in
+    /// the *conformer* — a sibling of `Validation`, not a member — so they have to say `Validation.`.
+    let qualifier: String
 
     init(
         access: String,
         path: String,
         location: String,
         accumulator: String = "wireOpenAPIFailures",
-        indent: String
+        indent: String,
+        qualifier: String = ""
     ) {
         self.access = access
         self.path = path
         self.location = location
         self.accumulator = accumulator
         self.indent = indent
+        self.qualifier = qualifier
     }
 
     /// A property of this object: a step down in both the access and the reported path.
@@ -274,7 +334,8 @@ struct EmissionSite {
             path: "\(path).\(name)",
             location: location,
             accumulator: accumulator,
-            indent: indent
+            indent: indent,
+            qualifier: qualifier
         )
     }
 
@@ -287,7 +348,8 @@ struct EmissionSite {
             path: path,
             location: location,
             accumulator: accumulator,
-            indent: indent
+            indent: indent,
+            qualifier: qualifier
         )
     }
 
@@ -300,14 +362,15 @@ struct EmissionSite {
             path: "\\(wireOpenAPIItemPath)",
             location: location,
             accumulator: "wireOpenAPIItemFailures",
-            indent: indent + "        "
+            indent: indent + "        ",
+            qualifier: qualifier
         )
     }
 }
 
 extension DirectDispatchEmitter {
     /// The checks for one node at one site — a dispatch, with each shape's emission named below.
-    func checks(for node: SpecAssertions, at site: EmissionSite, patterns: inout [String]) -> String {
+    func checks(for node: SpecAssertions, at site: EmissionSite, pool: [String]) -> String {
         switch node {
         case .none:
             return ""
@@ -316,7 +379,7 @@ extension DirectDispatchEmitter {
             // means it did not, so emitting nothing is the safe read.
             return ""
         case .string(let minLength, let maxLength, let pattern):
-            return stringCheck(minLength, maxLength, pattern, at: site, patterns: &patterns)
+            return stringCheck(minLength, maxLength, pattern, at: site, pool: pool)
         case .integer(let minimum, let exclusiveMinimum, let maximum, let exclusiveMaximum, let multipleOf):
             return call(
                 "integer",
@@ -332,11 +395,11 @@ extension DirectDispatchEmitter {
         case .reference(let name):
             return referenceCall(name, at: site)
         case .array(let minItems, let maxItems, let uniqueItems, let items):
-            return arrayCheck(minItems, maxItems, uniqueItems, items, at: site, patterns: &patterns)
+            return arrayCheck(minItems, maxItems, uniqueItems, items, at: site, pool: pool)
         case .object(let properties):
-            return objectChecks(properties, at: site, patterns: &patterns)
+            return objectChecks(properties, at: site, pool: pool)
         case .composed(let members):
-            return composedChecks(members, at: site, patterns: &patterns)
+            return composedChecks(members, at: site, pool: pool)
         }
     }
 
@@ -346,18 +409,15 @@ extension DirectDispatchEmitter {
         _ maxLength: Int?,
         _ pattern: String?,
         at site: EmissionSite,
-        patterns: inout [String]
+        pool: [String]
     ) -> String {
         var arguments: [String] = []
         if let minLength { arguments.append("minLength: \(minLength)") }
         if let maxLength { arguments.append("maxLength: \(maxLength)") }
         if let pattern {
-            let index =
-                patterns.firstIndex(of: pattern)
-                ?? {
-                    patterns.append(pattern)
-                    return patterns.count - 1
-                }()
+            // The pool is precomputed, so an unknown pattern is impossible; falling back to no check
+            // rather than trapping keeps a codegen slip from becoming a crash in someone's build.
+            guard let index = pool.firstIndex(of: pattern) else { return call("string", arguments, at: site) }
             arguments.append("pattern: _p\(index)")
         }
         return call("string", arguments, at: site)
@@ -371,7 +431,7 @@ extension DirectDispatchEmitter {
     private func referenceCall(_ name: String, at site: EmissionSite) -> String {
         guard componentSchemas[name].map(carriesChecks) ?? false else { return "" }
         return """
-            \(site.indent)\(schemaFunctionName(name))(
+            \(site.indent)\(site.qualifier)\(schemaFunctionName(name))(
             \(site.indent)    \(site.access), at: "\(site.path)", in: \(site.location), \
             into: &\(site.accumulator)
             \(site.indent))
@@ -384,13 +444,13 @@ extension DirectDispatchEmitter {
         _ uniqueItems: Bool,
         _ items: SpecAssertions,
         at site: EmissionSite,
-        patterns: inout [String]
+        pool: [String]
     ) -> String {
         var arguments: [String] = []
         if let minItems { arguments.append("minItems: \(minItems)") }
         if let maxItems { arguments.append("maxItems: \(maxItems)") }
         if uniqueItems { arguments.append("uniqueItems: true") }
-        let element = checks(for: items, at: site.element, patterns: &patterns)
+        let element = checks(for: items, at: site.element, pool: pool)
         guard !element.isEmpty else { return call("array", arguments, at: site) }
         let joined = arguments.isEmpty ? "" : ", " + arguments.joined(separator: ", ")
         return """
@@ -407,7 +467,7 @@ extension DirectDispatchEmitter {
     private func objectChecks(
         _ properties: [SpecProperty],
         at site: EmissionSite,
-        patterns: inout [String]
+        pool: [String]
     ) -> String {
         properties.compactMap { property -> String? in
             guard carriesChecks(property.assertions) else { return nil }
@@ -425,7 +485,7 @@ extension DirectDispatchEmitter {
             return checks(
                 for: property.assertions,
                 at: site.property(access: access, named: property.name),
-                patterns: &patterns
+                pool: pool
             )
         }
         .joined(separator: "\n")
@@ -434,11 +494,11 @@ extension DirectDispatchEmitter {
     private func composedChecks(
         _ members: [SpecComposedMember],
         at site: EmissionSite,
-        patterns: inout [String]
+        pool: [String]
     ) -> String {
         members.compactMap { member -> String? in
             guard carriesChecks(member.assertions) else { return nil }
-            return checks(for: member.assertions, at: site.composedMember(member.index), patterns: &patterns)
+            return checks(for: member.assertions, at: site.composedMember(member.index), pool: pool)
         }
         .joined(separator: "\n")
     }
@@ -479,5 +539,84 @@ extension DirectDispatchEmitter {
         guard !requestAssertions(for: operation).isEmpty else { return "" }
         let member = GeneratorSafeNames.swiftMemberName(for: operation.operationID, strategy: namingStrategy)
         return "\(indent)try \(validationEnum).\(member)(input)\n"
+    }
+}
+
+// MARK: - responses
+
+extension DirectDispatchEmitter {
+    /// The check for a value the handler is about to return, or nothing when responses are not validated
+    /// or this response asserts nothing.
+    ///
+    /// A separate accumulator and a separate error type from the request checks: the caller broke nothing,
+    /// so this is the service's own breach and answers 500 with no body. Reusing the request accumulator
+    /// would also mix the two blames in one report.
+    func responseCheck(
+        _ node: SpecAssertions,
+        access: String,
+        operationID: String,
+        indent: String
+    ) -> String {
+        guard settings.validatesResponses, carriesChecks(node) else { return "" }
+        let site = EmissionSite(
+            access: access,
+            path: "body",
+            location: ".body",
+            accumulator: "wireOpenAPIResponseFailures",
+            indent: indent,
+            qualifier: "\(validationEnum)."
+        )
+        let body = checks(for: node, at: site, pool: patternPool)
+        guard !body.isEmpty else { return "" }
+        return """
+            \(indent)var wireOpenAPIResponseFailures = WireOpenAPIFailureAccumulator()
+            \(body)
+            \(indent)if let wireOpenAPIResponseError = wireOpenAPIResponseFailures.responseError(
+            \(indent)    operationID: "\(operationID)"
+            \(indent)) {
+            \(indent)    throw wireOpenAPIResponseError
+            \(indent)}
+
+            """
+    }
+
+    /// The check for the response a **typed** handler constructs.
+    func typedResponseCheck(_ operation: DiscoveredOperation, indent: String) -> String {
+        responseCheck(
+            selectedResponse(for: operation).assertions,
+            access: "wireOpenAPIResult",
+            operationID: operation.operationID,
+            indent: indent
+        )
+    }
+
+    /// The checks for a **raw** handler's output.
+    ///
+    /// A raw handler builds the `Output` itself, so the value has to be destructured back out of it. That
+    /// needs no naming this emitter does not already rely on: the case is the status's safe name, which
+    /// the typed shim already emits when it *constructs* one, and `.body` / `.json` are the same members
+    /// `bodyBinding` reads on an `Input`. `if case` rather than a `switch`, so a document declaring
+    /// responses this cannot check still compiles.
+    func rawResponseChecks(_ operation: DiscoveredOperation, indent: String) -> String {
+        guard settings.validatesResponses else { return "" }
+        return (operationRoutes[operation.operationID]?.responses ?? [])
+            .filter { carriesChecks($0.assertions) }
+            .compactMap { response -> String? in
+                let caseName = GeneratorStatusNames.safeName(for: response.code)
+                let inner = responseCheck(
+                    response.assertions,
+                    access: "wireOpenAPIBody",
+                    operationID: operation.operationID,
+                    indent: indent + "    "
+                )
+                guard !inner.isEmpty else { return nil }
+                return """
+                    \(indent)if case .\(caseName)(let wireOpenAPIPayload) = wireOpenAPIOutput,
+                    \(indent)    case .json(let wireOpenAPIBody) = wireOpenAPIPayload.body
+                    \(indent){
+                    \(inner)\(indent)}
+                    """
+            }
+            .joined(separator: "\n")
     }
 }

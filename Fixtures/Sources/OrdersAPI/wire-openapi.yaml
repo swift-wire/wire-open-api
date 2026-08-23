@@ -1,0 +1,3 @@
+# Response validation is on for this document, and off for the app's own — so the fixture serves both
+# arrangements at once, and each proves the other is really a per-document setting.
+validatesResponses: true

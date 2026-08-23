@@ -40,6 +40,9 @@ var localSpecPath: String?
 var moduleSpecPaths: [String: String] = [:]
 /// The generator config beside each document, keyed the same way — `""` for this target's own.
 var specConfigPaths: [String: String] = [:]
+/// The adapter's own settings file beside each document, keyed the same way. A file of ours rather than
+/// a key in the generator's config, which rejects unknown keys outright.
+var specSettingsPaths: [String: String] = [:]
 /// Sources grouped by the module that declares them, in the order the plugin passes them — this target
 /// first, then each Wire-aware dependency. The grouping is what lets a bare `@OpenAPIController` mean
 /// *the document beside this controller* rather than the document of whichever target happens to be
@@ -57,6 +60,12 @@ while index < arguments.count {
     case "--spec-config":
         index += 1
         if index < arguments.count { specConfigPaths[""] = arguments[index] }
+    case "--spec-settings":
+        index += 1
+        if index < arguments.count { specSettingsPaths[""] = arguments[index] }
+    case "--spec-module-settings":
+        index += 2
+        if index < arguments.count { specSettingsPaths[arguments[index - 1]] = arguments[index] }
     case "--spec-module-config":
         index += 2
         if index < arguments.count { specConfigPaths[arguments[index - 1]] = arguments[index] }
@@ -193,6 +202,7 @@ for (spec, controllers) in byGroup.sorted(by: { $0.key < $1.key }) where !contro
         componentSchemas: document?.componentAssertions(at: specPath ?? "") ?? [:],
         serverPrefix: resolveServerPrefix(document: document, path: specPath ?? ""),
         namingStrategy: resolveNamingStrategy(configPath: specConfigPaths[spec == localModule ? "" : spec]),
+        settings: resolveWireSettings(path: specSettingsPaths[spec == localModule ? "" : spec]),
         foldEntries: foldEntries
     ).emit(into: &lines)
 }

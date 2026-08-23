@@ -52,6 +52,8 @@ struct DirectDispatchEmitter {
     /// `GeneratorSafeNames` turns an operationId into `Operations.<X>` and a parameter name into an
     /// `Input` member, and the two strategies disagree about both.
     let namingStrategy: GeneratorNamingStrategy
+    /// What `wire-openapi.yaml` beside this document asks for.
+    let settings: WireSettings
     let foldEntries: ([String], String) -> [String]
 
     /// The enum this spec's conformer is emitted inside. It exists to carry typealiases: within it, a

@@ -41,6 +41,13 @@ public struct OrderController: Sendable {
 
     @RawOperation
     public func getOrder(_ input: Operations.GetOrder.Input) async throws -> Operations.GetOrder.Output {
-        .ok(.init(body: .json(.init(id: input.path.id, item: "\(store.item(for: input.path.id)) via \(trace.path)"))))
+        // The service breaking its *own* contract: `Order.item` is bounded at 60 and this exceeds it, so
+        // the generated response check answers 500 with no body. The caller did nothing wrong and is told
+        // nothing of the internals — which is the whole difference from a request violation.
+        let item =
+            input.path.id == "toolong"
+            ? String(repeating: "x", count: 80)
+            : "\(store.item(for: input.path.id)) via \(trace.path)"
+        return .ok(.init(body: .json(.init(id: input.path.id, item: item))))
     }
 }

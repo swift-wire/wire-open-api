@@ -83,6 +83,25 @@ extension OpenAPIKit.OpenAPI.Document {
         )
     }
 
+    /// The JSON schema of a content map, resolved.
+    ///
+    /// Only the JSON entry: it is the one content type whose value the generator gives a schema-derived
+    /// Swift type, so it is the only one a validator can walk. Requests and responses both ask this,
+    /// which is why it lives here rather than being spelled at each of them.
+    ///
+    /// `first(where:)` rather than `first { }`: on an `OrderedDictionary` the trailing-closure form binds
+    /// to the `first` *property* and then tries to call it.
+    func jsonSchema(
+        in content: OpenAPIKit.OpenAPI.Content.Map,
+        at documentPath: String,
+        describing subject: String
+    ) -> OpenAPIKit.JSONSchema? {
+        content
+            .first(where: { $0.key.rawValue == "application/json" })
+            .map { resolve($0.value, "a JSON content reference in \(subject)", at: documentPath) }?
+            .schema
+    }
+
     /// Resolve one `$ref`-or-value, reporting an unresolvable reference against the document.
     ///
     /// An external reference lands here too; the generator does not support those either, so naming it
@@ -155,7 +174,16 @@ extension OpenAPIKit.OpenAPI.Document {
                         )
                         return SpecResponse(
                             code: code,
-                            contentTypes: response.content.keys.map(\.rawValue).sorted()
+                            contentTypes: response.content.keys.map(\.rawValue).sorted(),
+                            assertions: assertions(
+                                of: jsonSchema(
+                                    in: response.content,
+                                    at: documentPath,
+                                    describing: "the \(code) response of '\(operationID)'"
+                                ),
+                                at: documentPath,
+                                describing: "the \(code) response of '\(operationID)'"
+                            )
                         )
                     }
                     .sorted { $0.code < $1.code }
@@ -196,16 +224,11 @@ extension OpenAPIKit.OpenAPI.Document {
                 // one content type whose value the generator gives a schema-derived Swift type,
                 // so it is the only one a validator can walk.
                 assertions: assertions(
-                    of: body.content
-                        .first(where: { $0.key.rawValue == "application/json" })
-                        .map {
-                            resolve(
-                                $0.value,
-                                "a JSON content reference in '\(operationID)'",
-                                at: documentPath
-                            )
-                        }?
-                        .schema,
+                    of: jsonSchema(
+                        in: body.content,
+                        at: documentPath,
+                        describing: "the request body of '\(operationID)'"
+                    ),
                     at: documentPath,
                     describing: "the request body of '\(operationID)'"
                 )

@@ -186,6 +186,8 @@ struct SpecResponse {
     let code: Int
     /// The content types declared for it, in document order. Empty means a response with no body.
     let contentTypes: [String]
+    /// What the JSON schema of this response asserts — checked only when `wire-openapi.yaml` asks for it.
+    let assertions: SpecAssertions
 }
 
 /// The `requestBody:` entry: whether it must be present, and what it can be.
@@ -213,4 +215,31 @@ func resolveNamingStrategy(configPath: String?) -> GeneratorNamingStrategy {
         let strategy = GeneratorNamingStrategy(rawValue: raw)
     else { return .generatorDefault }
     return strategy
+}
+
+// MARK: - the adapter's own settings
+
+/// What `wire-openapi.yaml` beside a document can say.
+///
+/// A file of ours rather than a key in `openapi-generator-config.yaml`: that config belongs to
+/// swift-openapi-generator, which **rejects unknown keys outright** — a setting of ours there fails the
+/// generator before this tool runs at all. Absent file means every default.
+struct WireSettings {
+    /// Whether to check what handlers *return* against the document, as well as what callers send.
+    ///
+    /// Off by default, and deliberately a build-time setting rather than a runtime one: turning it on
+    /// widens the diagnostics to response-reachable schemas, and a constraint this adapter cannot express
+    /// has to fail the build only for someone who actually asked for the check.
+    var validatesResponses = false
+}
+
+func resolveWireSettings(path: String?) -> WireSettings {
+    guard let path,
+        let contents = try? String(contentsOfFile: path, encoding: .utf8),
+        let loaded = ((try? Yams.load(yaml: contents)) ?? nil),
+        let document = loaded as? [String: Any]
+    else { return WireSettings() }
+    var settings = WireSettings()
+    if let validates = document["validatesResponses"] as? Bool { settings.validatesResponses = validates }
+    return settings
 }

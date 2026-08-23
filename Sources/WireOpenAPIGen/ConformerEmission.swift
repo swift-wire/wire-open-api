@@ -140,17 +140,30 @@ extension DirectDispatchEmitter {
             .filter { seen.insert($0.errorType).inserted }
             .filter { !$0.isTerminalScoped || declaresStatus($0, for: operation) }
         guard !mappings.isEmpty else { return "" }
-        return mappings.map { mapping in
-            let pattern =
-                mapping.bodyClosure == nil
-                ? "catch is \(mapping.errorType)"
-                : "catch let wireOpenAPIError as \(mapping.errorType)"
-            return """
-                \(indent)} \(pattern) {
-                \(indent)    return \(errorOutcome(mapping, for: operation))
-                """
-        }
-        .joined(separator: "\n")
+        // First, and ahead of every author mapping: a *response* validation failure must not be matched
+        // by the clauses of the `do` it was thrown from. Without this a `Swift.Error` catch-all would
+        // answer the service's own breach as though the caller had caused it, and an `@ErrorResponse` on
+        // the response error whose own body is invalid would loop. Rethrowing here sends it one hop to
+        // the terminal, where `HTTPResponseConvertible` answers 500 with no body of the document's.
+        let regress =
+            settings.validatesResponses
+            ? """
+            \(indent)} catch let wireOpenAPIResponseFailure as WireOpenAPIResponseValidationError {
+            \(indent)    throw wireOpenAPIResponseFailure
+            """ + "\n"
+            : ""
+        return regress
+            + mappings.map { mapping in
+                let pattern =
+                    mapping.bodyClosure == nil
+                    ? "catch is \(mapping.errorType)"
+                    : "catch let wireOpenAPIError as \(mapping.errorType)"
+                return """
+                    \(indent)} \(pattern) {
+                    \(mappedOutcome(mapping, for: operation, indent: indent + "    "))
+                    """
+            }
+            .joined(separator: "\n")
     }
 
     /// What a mapped error returns: the document's own response case when it declares that status and it
@@ -268,7 +281,17 @@ extension DirectDispatchEmitter {
         // operation, so `@ErrorResponse` gets its turn at it exactly as it does at a handler throw.
         let validation = validationCall(operation, indent: indent)
         guard operation.isTyped else {
-            return "\(validation)\(indent)return try await \(subject).\(operation.methodName)(input)"
+            // A raw handler builds its own `Output`, so checking what it returns means destructuring the
+            // value back out — bound to a local only when there is something to check.
+            let rawChecks = rawResponseChecks(operation, indent: indent)
+            guard !rawChecks.isEmpty else {
+                return "\(validation)\(indent)return try await \(subject).\(operation.methodName)(input)"
+            }
+            return """
+                \(validation)\(indent)let wireOpenAPIOutput = try await \(subject).\(operation.methodName)(input)
+                \(rawChecks)
+                \(indent)return wireOpenAPIOutput
+                """
         }
         let arguments = operation.parameters.map { parameter -> String in
             let label = parameter.label.map { "\($0): " } ?? ""
@@ -292,7 +315,7 @@ extension DirectDispatchEmitter {
         }
         return """
             \(prelude)\(indent)let wireOpenAPIResult = \(call)
-            \(indent)return .\(caseName)(.init(body: .json(wireOpenAPIResult)))
+            \(typedResponseCheck(operation, indent: indent))\(indent)return .\(caseName)(.init(body: .json(wireOpenAPIResult)))
             """
     }
 
@@ -311,7 +334,9 @@ extension DirectDispatchEmitter {
             return named
         }
         return responses.first { (200..<300).contains($0.code) }
-            ?? SpecResponse(code: 200, contentTypes: ["application/json"])
+            // The fallback for a document declaring no success at all. `diagnoseTypedResponses` has
+            // already rejected that, so it asserts nothing because it describes nothing.
+            ?? SpecResponse(code: 200, contentTypes: ["application/json"], assertions: .none)
     }
 
     /// Unwrapping the request body out of the generated `Input.Body` enum.
@@ -383,5 +408,40 @@ extension DirectDispatchEmitter {
             return "\(indent)    \(conformerField(controller)): \(value)"
         }
         return "\(conformer)(\n\(arguments.joined(separator: ",\n"))\n\(indent))"
+    }
+}
+
+// MARK: - a mapped error's own body
+
+extension DirectDispatchEmitter {
+    /// What a matched `@ErrorResponse` clause runs.
+    ///
+    /// Ordinarily one `return`. With response validation on and the mapped response carrying a schema
+    /// that asserts something, the body is bound first and checked before it is sent — an author's
+    /// closure can violate the document exactly as a success value can, and it is built *here*, inside a
+    /// `catch`, where the success path's check never runs. Missing this is the easy mistake, because the
+    /// success path is the one anybody tests.
+    func mappedOutcome(
+        _ mapping: ErrorMapping,
+        for operation: DiscoveredOperation,
+        indent: String
+    ) -> String {
+        let documented = operationRoutes[operation.operationID]?.responses.first {
+            GeneratorStatusNames.safeName(for: $0.code) == mapping.status
+        }
+        guard let body = mapping.bodyClosure, let documented,
+            settings.validatesResponses, carriesChecks(documented.assertions)
+        else { return "\(indent)return \(errorOutcome(mapping, for: operation))" }
+        let caseName = GeneratorStatusNames.safeName(for: documented.code)
+        let check = responseCheck(
+            documented.assertions,
+            access: "wireOpenAPIMapped",
+            operationID: operation.operationID,
+            indent: indent
+        )
+        return """
+            \(indent)let wireOpenAPIMapped = try wireOpenAPIErrorBody(wireOpenAPIError, \(body))
+            \(check)\(indent)return .\(caseName)(.init(body: .json(wireOpenAPIMapped)))
+            """
     }
 }
