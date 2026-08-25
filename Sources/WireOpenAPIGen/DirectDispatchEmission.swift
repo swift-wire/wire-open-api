@@ -194,7 +194,8 @@ struct DirectDispatchEmitter {
         guard !entries.isEmpty else {
             return """
                 \(register) { request, requestContext, parameters, reader, sender in
-                \(indent)    let wireOpenAPIRegistry = requestContext.responseHeaders
+                \(indent)    let wireOpenAPIContents = requestContext.takeContents()
+                \(indent)    let wireOpenAPIRegistry = wireOpenAPIContents.responseHeaders.take()
                 \(terminal(controller, operation, indent: indent + "    "))
                 \(indent)}
                 """
@@ -202,16 +203,19 @@ struct DirectDispatchEmitter {
         return """
             \(register) {
             \(indent)    request, requestContext, parameters, reader, responseSender in
-            \(indent)    let wireOpenAPIRegistry = requestContext.responseHeaders
+            \(indent)    let wireOpenAPIContents = requestContext.takeContents()
+            \(indent)    let wireOpenAPIBase = wireOpenAPIContents.base
             \(indent)    let wireOpenAPIBox = RequestResponseMiddlewareBox.pending(
-            \(indent)        request: request, requestContext: requestContext.takeBase(), reader: reader,
-            \(indent)        responseSender: responseSender, responseHeaders: wireOpenAPIRegistry
+            \(indent)        request: request, requestContext: wireOpenAPIBase, reader: reader,
+            \(indent)        responseSender: responseSender,
+            \(indent)        responseHeaders: wireOpenAPIContents.responseHeaders.take()
             \(indent)    )
             \(indent)    let wireOpenAPIChain = wireCompose {
             \(entries.joined(separator: "\n"))
             \(indent)    }
             \(indent)    try await wireOpenAPIChain.intercept(input: wireOpenAPIBox) { wireOpenAPIFinalBox in
-            \(indent)        try await wireOpenAPIFinalBox.withPendingContents { request, _, reader, sender in
+            \(indent)        try await wireOpenAPIFinalBox.withPendingContents {
+            \(indent)            request, _, reader, sender, wireOpenAPIRegistry in
             \(terminal(controller, operation, indent: indent + "            "))
             \(indent)        }
             \(indent)    }
