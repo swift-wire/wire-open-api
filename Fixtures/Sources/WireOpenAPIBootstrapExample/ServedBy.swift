@@ -26,7 +26,10 @@ where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields?, Sender.Wr
         input: consuming Input,
         next: (consuming NextInput) async throws -> Return
     ) async throws -> Return {
-        input.responseHeaders.add(.set(.init("x-served-by")!, "wire-open-api"))
-        return try await next(input)
+        return try await input.contributing { headers in
+            headers.add(.set(.init("x-served-by")!, "wire-open-api"))
+        } then: { input in
+            try await next(input)
+        }
     }
 }
