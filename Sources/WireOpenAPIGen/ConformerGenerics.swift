@@ -73,16 +73,30 @@ extension DirectDispatchEmitter {
     /// field cannot infer its own type, because the proxy holds a scope-entry thunk rather than a subject.
     /// Omitted otherwise, so the common output stays plain.
     var noSubjectHelper: String {
-        guard controllers.contains(where: { $0.seed != nil && !$0.genericParameters.isEmpty }) else { return "" }
+        guard needsScopeEntryProjection(controllers) else { return "" }
         return """
 
             /// A typed `nil` for a request-scoped controller's template field, with the subject type
             /// recovered from its scope-entry thunk. The thunk is never called — only its return type is
             /// read, which is what lets the template name a type this file never spells.
-            static func noSubject<Seed, Subject, Teardown>(
-                _ thunk: @Sendable (Seed) async throws -> (Subject, Teardown)
-            ) -> Subject? { nil }
+            ///
+            /// The thunk returns Wire's `_WireScopeEntry_<Subject>` struct, which does not decompose into
+            /// generic parameters the way the tuple it replaced did — so the subject is projected through
+            /// `WireScopeEntry`, the protocol that exists for exactly this.
+            static func noSubject<Seed, Entry: WireScopeEntry>(
+                _ thunk: @Sendable (Seed) async throws -> Entry
+            ) -> Entry.Subject? { nil }
 
             """
     }
+}
+
+/// Whether any of `controllers` is both generic and request-scoped — the one case that needs the subject
+/// type projected out of a scope-entry thunk, and so the one that needs `WireScopeEntry`.
+///
+/// Shared by the helper's emission and by the emitted file's import list, which has to name `Wire` exactly
+/// when the helper is there: naming it always would be an unused import in almost every output, and the
+/// 6.4 compiler warns on those.
+func needsScopeEntryProjection(_ controllers: [DiscoveredController]) -> Bool {
+    controllers.contains { $0.seed != nil && !$0.genericParameters.isEmpty }
 }
