@@ -158,8 +158,9 @@ struct DirectDispatchEmitter {
         // `Converter`, which allocates two `JSONEncoder`s and a `JSONDecoder`. Paying that per request
         // costs more than the task-local this exists to avoid — measured, not assumed.
         return """
-            \(indent)let (wireOpenAPISubject, wireOpenAPITeardown) = try await self.\
-            \(proxyScopeEntry(controller))(request)
+            \(indent)let wireOpenAPIEntry = try await self.\(proxyScopeEntry(controller))(request)
+            \(indent)let wireOpenAPISubject = wireOpenAPIEntry._wireSubject
+            \(indent)let wireOpenAPITeardown = wireOpenAPIEntry._wireScopeTeardown
             \(indent)var wireOpenAPIRebound = wireOpenAPIServerTemplate
             \(indent)wireOpenAPIRebound.handler = \(conformerLiteral(binding: controller, indent: indent))
             \(indent)// `let`, because the handler closure below is `@Sendable` and cannot capture a `var`.
@@ -189,43 +190,57 @@ struct DirectDispatchEmitter {
         _ route: OperationRoute,
         indent: String
     ) -> String {
+        // Every registration is wrapped in its own `do`, and the body indented one level inside it, so
+        // the path local below is scoped to one route. The alternative — a name derived from the
+        // operationId — would need sanitising, since an operationId is not required to be a Swift
+        // identifier (`get-task`, `list_tasks`); a block needs no name at all and cannot collide however
+        // many operations a document declares.
+        let body = indent + "    "
         let entries =
-            foldEntries(controller.middleware, indent + "            ")
-            + foldEntries(operation.middleware, indent + "            ")
+            foldEntries(controller.middleware, body + "            ")
+            + foldEntries(operation.middleware, body + "            ")
+        // Bound to a local rather than written inline, so the path the route registers under and the
+        // template its `RouteContext` carries are the same string by construction — and composed once,
+        // rather than once per request, since the runtime's prefixing throws.
         let register = """
-            \(indent)builder.register(
-            \(indent)    method: .\(route.method.lowercased()),
-            \(indent)    path: try wireOpenAPIServerTemplate.apiPathComponentsWithServerPrefix("\(route.path)")
-            \(indent))
+            \(body)let wireOpenAPIPath = try wireOpenAPIServerTemplate
+            \(body)    .apiPathComponentsWithServerPrefix("\(route.path)")
+            \(body)builder.register(method: .\(route.method.lowercased()), path: wireOpenAPIPath)
             """
         guard !entries.isEmpty else {
             return """
+                \(indent)do {
                 \(register) { request, requestContext, parameters, reader, sender in
-                \(indent)    let wireOpenAPIContents = requestContext.takeContents()
-                \(indent)    let wireOpenAPIRegistry = wireOpenAPIContents.responseHeaders.take()
-                \(terminal(controller, operation, indent: indent + "    "))
+                \(body)    let wireOpenAPIContents = requestContext.takeContents()
+                \(body)    let wireOpenAPIRegistry = wireOpenAPIContents.responseHeaders.take()
+                \(terminal(controller, operation, indent: body + "    "))
+                \(body)}
                 \(indent)}
                 """
         }
         return """
+            \(indent)do {
             \(register) {
-            \(indent)    request, requestContext, parameters, reader, responseSender in
-            \(indent)    let wireOpenAPIContents = requestContext.takeContents()
-            \(indent)    let wireOpenAPIBase = wireOpenAPIContents.base
-            \(indent)    let wireOpenAPIBox = RequestResponseMiddlewareBox.pending(
-            \(indent)        request: request, requestContext: wireOpenAPIBase, reader: reader,
-            \(indent)        responseSender: responseSender,
-            \(indent)        responseHeaders: wireOpenAPIContents.responseHeaders.take()
-            \(indent)    )
-            \(indent)    let wireOpenAPIChain = wireCompose {
+            \(body)    request, requestContext, parameters, reader, responseSender in
+            \(body)    let wireOpenAPIContents = requestContext.takeContents()
+            \(body)    let wireOpenAPIBase = wireOpenAPIContents.base
+            \(body)    let wireOpenAPIBox = RequestResponseMiddlewareBox.pending(
+            \(body)        request: request, requestContext: wireOpenAPIBase,
+            \(body)        route: RouteContext(template: wireOpenAPIPath, pathParameters: parameters),
+            \(body)        reader: reader,
+            \(body)        responseSender: responseSender,
+            \(body)        responseHeaders: wireOpenAPIContents.responseHeaders.take()
+            \(body)    )
+            \(body)    let wireOpenAPIChain = wireCompose {
             \(entries.joined(separator: "\n"))
-            \(indent)    }
-            \(indent)    try await wireOpenAPIChain.intercept(input: wireOpenAPIBox) { wireOpenAPIFinalBox in
-            \(indent)        try await wireOpenAPIFinalBox.withPendingContents {
-            \(indent)            request, _, reader, sender, wireOpenAPIRegistry in
-            \(terminal(controller, operation, indent: indent + "            "))
-            \(indent)        }
-            \(indent)    }
+            \(body)    }
+            \(body)    try await wireOpenAPIChain.intercept(input: wireOpenAPIBox) { wireOpenAPIFinalBox in
+            \(body)        try await wireOpenAPIFinalBox.withPendingContents {
+            \(body)            request, _, _, reader, sender, wireOpenAPIRegistry in
+            \(terminal(controller, operation, indent: body + "            "))
+            \(body)        }
+            \(body)    }
+            \(body)}
             \(indent)}
             """
     }
