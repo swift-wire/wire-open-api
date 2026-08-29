@@ -98,6 +98,17 @@ struct DirectDispatchEmitter {
         "_wireSubject\(suffix(controller))"
     }
 
+    /// The conformer's field for a graph-aware binding's worker — one per distinct worker in the group,
+    /// named after the type so two operations naming the same one share it.
+    func workerField(_ worker: String) -> String { "_wireWorker_\(worker)" }
+}
+
+/// The conformer's fields for what a worker's `bind` takes beyond the decoded `Input`.
+let scopeResolvedRequestField = "_wireRequest"
+let scopeResolvedPathParametersField = "_wirePathParameters"
+
+extension DirectDispatchEmitter {
+
     /// `operationId` → the controller that declared it and the method implementing it.
     var byOperationID: [String: (controller: DiscoveredController, operation: DiscoveredOperation)] {
         var found: [String: (controller: DiscoveredController, operation: DiscoveredOperation)] = [:]

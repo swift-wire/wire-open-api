@@ -33,6 +33,26 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /tasks/{id}/authorized:
+    get:
+      operationId: authorizedTask
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: A task the caller may read
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        # The refusal is the *binding's*, thrown before the handler runs — but it is still one of this
+        # operation's own responses, which is what lets `@ErrorResponse` answer it as the document
+        # describes rather than as an undocumented status.
+        '403':
+          description: The caller may not read this task
   /tasks:
     get:
       operationId: listTasks

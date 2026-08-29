@@ -18,10 +18,15 @@ final class ControllerScanner: SyntaxVisitor {
     private let file: String
     private let converter: SourceLocationConverter
 
-    init(module: String, file: String, tree: SourceFileSyntax) {
+    /// The graph-aware bindings reachable in this run, so a parameter attribute outside the four names
+    /// this generator knows can still be recognised as one — see `GraphAwareBindings`.
+    let graphAwareBindings: GraphAwareBindings
+
+    init(module: String, file: String, tree: SourceFileSyntax, graphAwareBindings: GraphAwareBindings) {
         self.module = module
         self.file = file
         self.converter = SourceLocationConverter(fileName: file, tree: tree)
+        self.graphAwareBindings = graphAwareBindings
         super.init(viewMode: .sourceAccurate)
     }
 
@@ -228,11 +233,21 @@ final class ControllerScanner: SyntaxVisitor {
         for parameter in function.signature.parameterClause.parameters {
             var binding: String?
             var documented: String?
+            var worker: String?
             for element in parameter.attributes {
                 guard let attribute = element.as(AttributeSyntax.self) else { continue }
                 let name = attribute.attributeName.trimmedDescription
-                guard ["Path", "Query", "Header", "JSONBody"].contains(name) else { continue }
-                binding = name
+                // The four are this generator's own vocabulary; anything else is a binding only if its
+                // declaration says so. A graph-aware one is admitted here and excused the document match
+                // below, since what it binds never crosses the wire.
+                if let named = graphAwareBindings.worker(forAttribute: name) {
+                    binding = name
+                    worker = named
+                } else if ["Path", "Query", "Header", "JSONBody"].contains(name) {
+                    binding = name
+                } else {
+                    continue
+                }
                 if case .argumentList(let list) = attribute.arguments, let first = list.first {
                     documented = first.expression.as(StringLiteralExprSyntax.self)?.representedLiteralValue
                 }
@@ -252,6 +267,8 @@ final class ControllerScanner: SyntaxVisitor {
             parameters.append(
                 BoundParameter(
                     binding: binding,
+                    worker: worker,
+                    workerSeed: worker.flatMap { graphAwareBindings.seed(ofWorker: $0) },
                     documentedName: documented ?? ownName,
                     label: label,
                     name: ownName,
@@ -325,12 +342,20 @@ extension ControllerScanner {
 
 /// Every `@OpenAPIController` across the sources the plugin passed.
 func discoverControllers(in sources: [(module: String, paths: [String])]) -> [DiscoveredController] {
+    // Scanned first and over the same sources: a wrapper may be declared after the controller that uses
+    // it, or in another module entirely, so a scan that resolved as it went would depend on file order.
+    let graphAwareBindings = GraphAwareBindings(sources: sources)
     var discovered: [DiscoveredController] = []
     for group in sources {
         for path in group.paths {
             guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else { continue }
             let tree = Parser.parse(source: contents)
-            let scanner = ControllerScanner(module: group.module, file: path, tree: tree)
+            let scanner = ControllerScanner(
+                module: group.module,
+                file: path,
+                tree: tree,
+                graphAwareBindings: graphAwareBindings
+            )
             scanner.walk(tree)
             discovered.append(contentsOf: scanner.controllers)
         }

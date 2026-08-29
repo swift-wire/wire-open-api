@@ -52,8 +52,24 @@ struct DiscoveredOperation {
 /// request, while here the generator has already decoded it into `input.path.x` and the shim only has to
 /// name that member.
 struct BoundParameter {
-    /// `Path`, `Query`, `Header` or `JSONBody`.
+    /// `Path`, `Query`, `Header`, `JSONBody`, or a **graph-aware** binding's wrapper.
     let binding: String
+
+    /// The worker a graph-aware binding names, or `nil` for an ordinary one.
+    ///
+    /// Present ⇒ this parameter is **not** a document parameter and never crosses the wire: it is resolved
+    /// from the request scope, so the generated `Input` has no member for it and the shim calls the
+    /// worker's `bind` instead of projecting one.
+    let worker: String?
+    /// The seed of the scope `worker` is bound in, resolved where the parameter was scanned. `nil` when
+    /// there is no worker, or when its declaration is not in the parsed sources — which is itself the
+    /// mistake, and diagnosed as one.
+    ///
+    /// Carried on the parameter rather than looked up later, so every consumer reads one answer: the scan
+    /// is the only place that has both the attribute and the declarations it resolves against.
+    let workerSeed: String?
+    /// Whether this parameter is resolved from the request scope rather than read out of `Input`.
+    var isScopeResolved: Bool { worker != nil }
 
     /// Whether this parameter binds the request body rather than one of the document's `parameters:`.
     var isBody: Bool { binding == "JSONBody" }

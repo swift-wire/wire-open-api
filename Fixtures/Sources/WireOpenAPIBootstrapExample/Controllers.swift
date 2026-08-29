@@ -78,6 +78,19 @@ struct TaskController<Store: TaskStoring> {
     /// the *response* shape still gets their document's assertions enforced.
     ///
     /// The throw is the **generated validator's**, from the `pattern` the document puts on `id`.
+    /// A **typed** operation taking a graph-aware binding beside a documented one. `id` comes from the
+    /// document's `path` entry; `task` does not come from the document at all — it is resolved from the
+    /// request scope, and the handler cannot serve an unauthorised one because the refusal is how a task
+    /// comes into existence here.
+    @Operation
+    @ErrorResponse(TaskForbidden.self, .forbidden)
+    func authorizedTask(
+        @Path id: String,
+        @AuthorizedTask("read") task: Components.Schemas.Task
+    ) async throws -> Components.Schemas.Task {
+        task
+    }
+
     @RawOperation
     @ErrorResponse(
         WireOpenAPIRequestValidationError.self,
