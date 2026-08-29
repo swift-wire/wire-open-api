@@ -1,4 +1,5 @@
-import Wire
+public import Wire
+// Plain: `WireMVCKeys` is named in the alias's *value*, not in the type of anything public here.
 import WireMVC
 
 // The controller collation feature: the `@OpenAPIController` marker and its aggregate-proxy directive.
