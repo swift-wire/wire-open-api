@@ -28,10 +28,12 @@ import PackageDescription
 // already cost a day upstream: `WireScopeEntry` shipped a teardown requirement, swift-wire's own suite
 // passed because a package agrees with itself, and the emitted conformance was refused in a consumer.
 //
-// Nothing here needed it — `WireOpenAPIRoutes.invoke` and its neighbours already spell
+// Nothing here needed it — `WireOpenAPIRoutes.invoke` and its neighbours used to spell
 // `nonisolated(nonsending)` by hand, which is what this mismatch looks like when you meet it one
-// declaration at a time rather than as a rule. Those spellings are now redundant rather than wrong and
-// stay: they say what the function does where a reader asks.
+// declaration at a time rather than as a rule. Those spellings are gone: they are provably redundant (the
+// mangled symbols are byte-identical with and without them), and keeping a restatement of the default
+// implies the neighbours differ. Under this feature the thing worth spelling is `@concurrent`, and nothing
+// here wants it — which is also wire-mvc's convention, where no `func` declaration carries the annotation.
 //
 // Two things about adopting it, both measured rather than assumed:
 //

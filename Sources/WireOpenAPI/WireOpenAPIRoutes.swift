@@ -30,7 +30,7 @@ public enum WireOpenAPIRoutes {
     /// it caught: the scope entry's type is a struct swift-wire synthesised, so there is no spelling for
     /// the `var` a `do`/`catch` would have to assign into. Generic over `Entry` for the same reason — the
     /// name never appears.
-    public static nonisolated(nonsending) func enteringScope<Entry>(
+    public static func enteringScope<Entry>(
         _ enter: () async throws -> Entry
     ) async -> Result<Entry, any Error> {
         do {
@@ -57,7 +57,7 @@ public enum WireOpenAPIRoutes {
     /// The request body is never read here. There is nothing to read it for — the handler will not run —
     /// and a refusal that predates the scope is the one place in this file where not draining the body is
     /// the point rather than an oversight.
-    public static nonisolated(nonsending) func refuse<
+    public static func refuse<
         Sender: HTTPResponseSender & ~Copyable & SendableMetatype
     >(
         _ error: any Error,
@@ -91,7 +91,7 @@ public enum WireOpenAPIRoutes {
     /// The handler is supplied by the caller rather than looked up here: it is a call to the operation's
     /// own method on a `UniversalServer` the generated witness built for this request, which is what
     /// keeps a request-scoped subject out of ambient state.
-    public static nonisolated(nonsending) func invoke<
+    public static func invoke<
         Reader: AsyncReader & ~Copyable & SendableMetatype,
         Sender: HTTPResponseSender & ~Copyable & SendableMetatype
     >(
@@ -146,10 +146,14 @@ public enum WireOpenAPIRoutes {
     /// The two currencies meet cleanly in one place — WireMVC's matched path parameters are already
     /// `[String: Substring]`, exactly what `ServerRequestMetadata` carries, so that hand-off is a
     /// pass-through with no conversion.
-    /// `nonisolated(nonsending)`: it runs on the caller's isolation rather than hopping to a concurrent
-    /// context, which is what lets a possibly-isolated `Reader`/`ResponseSender` conformance cross into
-    /// it. The proposal's own handler signatures are written the same way.
-    private static nonisolated(nonsending) func invoke<
+    ///
+    /// **It runs on the caller's isolation**, which is what lets a possibly-isolated `Reader`/
+    /// `ResponseSender` conformance cross into it, and it is why this package compiles with
+    /// `NonisolatedNonsendingByDefault` rather than annotating the handful of functions that need it — see
+    /// `Package.swift`. Nothing here says `nonisolated(nonsending)` any more because saying it would imply
+    /// the neighbours differ; under that default the thing worth spelling is `@concurrent`, and nothing
+    /// here wants it. The proposal's own handler signatures are written the same way.
+    private static func invoke<
         Reader: AsyncReader & ~Copyable & SendableMetatype,
         Sender: HTTPResponseSender & ~Copyable & SendableMetatype
     >(
