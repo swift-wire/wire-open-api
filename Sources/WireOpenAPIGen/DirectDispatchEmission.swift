@@ -162,14 +162,12 @@ extension DirectDispatchEmitter {
             return "\(indent)let wireOpenAPIServer = wireOpenAPIServerTemplate\n" + call
         }
         // Scope entry stays in the terminal, matching M5.4.3: the scope outlives the middleware chain
-        // wrapping it, teardown runs after the response, and a failure entering it is raised where
-        // `@ErrorResponse` can still map it. Only this operation's own scope is entered.
+        // wrapping it, and teardown runs after the response. Only this operation's own scope is entered.
         //
         // The server is *copied* and re-handlered, never constructed here: `UniversalServer.init` builds a
         // `Converter`, which allocates two `JSONEncoder`s and a `JSONDecoder`. Paying that per request
         // costs more than the task-local this exists to avoid — measured, not assumed.
-        return """
-            \(indent)let wireOpenAPIEntry = try await self.\(proxyScopeEntry(controller))(request)
+        let scoped = """
             \(indent)let wireOpenAPISubject = wireOpenAPIEntry._wireSubject
             \(indent)let wireOpenAPITeardown = wireOpenAPIEntry._wireScopeTeardown
             \(indent)var wireOpenAPIRebound = wireOpenAPIServerTemplate
@@ -183,6 +181,46 @@ extension DirectDispatchEmitter {
             \(indent)    throw error
             \(indent)}
             \(indent)_ = await wireOpenAPITeardown()
+            """
+        return enteringScope(controller, serving: scoped, indent: indent)
+    }
+
+    /// The scope entry itself, and what happens when it fails.
+    ///
+    /// Entering the scope is the one thing in the terminal that happens *outside* every `catch` the
+    /// conformer emits, and it has to be: the entry produces the subject the conformer is built around,
+    /// and the scope has to outlive the response so teardown runs after it. So a `@Scoped(seed:)` binding
+    /// that throws — an unauthenticated request failing to build its `Caller` — reached the router with no
+    /// response to write, which is a dropped connection rather than a status. When the controller wrote
+    /// mappings, the failure is branched on here and answered with them.
+    private func enteringScope(
+        _ controller: DiscoveredController,
+        serving scoped: String,
+        indent: String
+    ) -> String {
+        guard let rejection = scopeEntryRejectionClosure(controller, indent: indent + "        ") else {
+            // Nothing to answer with, so nothing is gained by the branch: the original straight-line
+            // shape, and the throw still escapes exactly as it did.
+            return "\(indent)let wireOpenAPIEntry = try await self.\(proxyScopeEntry(controller))(request)\n"
+                + scoped
+        }
+        let served = scoped.split(separator: "\n").map { "    " + $0 }.joined(separator: "\n")
+        return """
+            \(indent)let wireOpenAPIEntered = await WireOpenAPIRoutes.enteringScope {
+            \(indent)    try await self.\(proxyScopeEntry(controller))(request)
+            \(indent)}
+            \(indent)switch wireOpenAPIEntered {
+            \(indent)case .failure(let wireOpenAPIScopeFailure):
+            \(indent)    try await WireOpenAPIRoutes.refuse(
+            \(indent)        wireOpenAPIScopeFailure,
+            \(rejection)
+            \(indent)        sender: ResponseHeaderApplyingSender(
+            \(indent)            wrapping: sender, registry: wireOpenAPIRegistry
+            \(indent)        )
+            \(indent)    )
+            \(indent)case .success(let wireOpenAPIEntry):
+            \(served)
+            \(indent)}
             """
     }
 

@@ -196,6 +196,7 @@ extension DirectDispatchEmitter {
                         )
                     }
                 }
+                diagnoseScopeEntryMapping(controller, mapping)
                 diagnoseControllerMappingForm(controller, mapping, covered: covered)
             }
         }
@@ -212,6 +213,42 @@ extension DirectDispatchEmitter {
     ///
     /// Reported once against the controller, naming the operations. Per operation it would say "on
     /// 'summariseTask'" about a mapping the author wrote on the type, once for each.
+    /// The extra rule a **scoped** controller's mapping carries, split out because it asks a different
+    /// question from the loop above: not "which operations does this cover in the forwarder" but "which
+    /// operations can this answer *instead of* the forwarder".
+    ///
+    /// A scoped controller's mapping also answers a failure entering the scope, and that happens before
+    /// dispatch — so it is not narrowed by shadowing the way the forwarder's copy is. Shadowing is a
+    /// statement about what the *handler* throws; the scope refuses before any handler is chosen, and the
+    /// answer is this mapping's whichever operation was asked for. Every operation therefore has to
+    /// declare the status, shadowed or not, or the refusal is undocumented on some of them.
+    private func diagnoseScopeEntryMapping(
+        _ controller: DiscoveredController,
+        _ mapping: ErrorMapping
+    ) {
+        guard !mapping.isTerminalScoped, controller.seed != nil else { return }
+        let shadowing =
+            controller.operations
+            .filter { operation in
+                operation.errorMappings.contains { $0.errorType == mapping.errorType }
+            }
+            .filter { documentedResponse(mapping, for: $0) == nil }
+            .map { "'\($0.operationID)'" }
+            .sorted()
+        guard !shadowing.isEmpty else { return }
+        fail(
+            """
+            @ErrorResponse(\(mapping.errorType).self, .\(mapping.status)) on \
+            '\(controller.typeName)' also answers a failure entering its request scope, which \
+            happens before an operation is dispatched — so it applies to \
+            \(shadowing.joined(separator: ", ")) too, despite their own mapping of the same error, \
+            and the document does not declare \(statusCode(named: mapping.status)) there. Add it, \
+            or drop the controller-scope mapping.
+            """,
+            in: controller
+        )
+    }
+
     private func diagnoseControllerMappingForm(
         _ controller: DiscoveredController,
         _ mapping: ErrorMapping,

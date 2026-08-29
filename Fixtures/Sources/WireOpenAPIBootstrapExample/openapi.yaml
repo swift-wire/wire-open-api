@@ -53,6 +53,30 @@ paths:
         # describes rather than as an undocumented status.
         '403':
           description: The caller may not read this task
+  # The scope-entry gate. `gatedTask` is served by a controller whose *scope* refuses — `RequestGate`
+  # throws while being constructed, before any handler runs — so the 401 below is answered by a mapping
+  # matched one level outside the forwarder. It is declared here like any other response because it is
+  # one: what refused is inside the service, and the caller is owed the same description either way.
+  /tasks/{id}/gated:
+    get:
+      operationId: gatedTask
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: A task, for a request that presented a user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          description: The request presented no user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /tasks:
     get:
       operationId: listTasks
