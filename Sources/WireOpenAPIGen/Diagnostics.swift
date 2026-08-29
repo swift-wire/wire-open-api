@@ -94,12 +94,65 @@ extension DirectDispatchEmitter {
     /// declare would read a member that does not exist ("no member" inside generated code), and a
     /// location the document contradicts would read the wrong one — `@Query` on something the spec puts
     /// in the path compiles perfectly and serves nothing.
+    /// A graph-aware parameter needs its worker constructed, which only the owning controller's own scope
+    /// entry does. Both failures are the *parameter's*, not either type's, so both are reported here.
+    private func diagnoseScopeResolvedParameter(
+        _ parameter: BoundParameter,
+        on controller: DiscoveredController,
+        in operation: DiscoveredOperation
+    ) {
+        guard let worker = parameter.worker else { return }
+        guard let workerSeed = parameter.workerSeed else {
+            fail(
+                """
+                @Operation '\(operation.operationID)' binds '\(parameter.name)' through '\(worker)', which \
+                is not a @Scoped(seed:) binding. A binding resolved from the request scope has to be one — \
+                that is what puts it in the scope its controller enters.
+                """,
+                at: operation
+            )
+            return
+        }
+        guard let controllerSeed = controller.seed else {
+            fail(
+                """
+                @Operation '\(operation.operationID)' binds '\(parameter.name)' through '\(worker)', which \
+                is bound in @Scoped(seed: \(workerSeed).self) — but '\(controller.typeName)' is not scoped, \
+                so it is held directly and enters no scope, and there is nothing to construct '\(worker)' \
+                in. Mark '\(controller.typeName)' @Scoped(seed: \(workerSeed).self).
+                """,
+                at: operation
+            )
+            return
+        }
+        guard controllerSeed == workerSeed else {
+            fail(
+                """
+                @Operation '\(operation.operationID)' binds '\(parameter.name)' through '\(worker)', which \
+                is bound in @Scoped(seed: \(workerSeed).self), but '\(controller.typeName)' is in \
+                @Scoped(seed: \(controllerSeed).self) — sibling seeded scopes are isolated by design, so \
+                its scope entry constructs only its own.
+                """,
+                at: operation
+            )
+            return
+        }
+    }
+
     func diagnoseTypedBindings() {
         for controller in controllers {
             for operation in controller.operations where operation.isTyped {
                 guard let route = operationRoutes[operation.operationID] else { continue }
                 diagnoseRequestBody(operation, route)
                 for parameter in operation.parameters where !parameter.isBody {
+                    // A graph-aware parameter is not a document parameter, and asking the document about
+                    // it is the wrong question: what it binds is resolved from the request scope and never
+                    // crosses the wire, so no `parameters:` entry could describe it. What it *does* need
+                    // is a scope to be resolved from.
+                    if parameter.isScopeResolved {
+                        diagnoseScopeResolvedParameter(parameter, on: controller, in: operation)
+                        continue
+                    }
                     guard let declared = route.parameters.first(where: { $0.name == parameter.documentedName })
                     else {
                         let known = route.parameters.map { "'\($0.name)' (\($0.location.rawValue))" }

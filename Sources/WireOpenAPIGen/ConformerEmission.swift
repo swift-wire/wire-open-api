@@ -18,10 +18,11 @@ extension DirectDispatchEmitter {
         let forwarders = controllers.flatMap { controller in
             controller.operations.map { forwarder(controller, $0) }
         }
-        let fields = controllers.enumerated().map { index, controller in
-            "    let \(conformerField(controller)): \(controller.subjectType(prefix: DiscoveredController.genericPrefix(index)))"
-                + (controller.seed != nil ? "?" : "")
-        }
+        let fields =
+            controllers.enumerated().map { index, controller in
+                "    let \(conformerField(controller)): \(controller.subjectType(prefix: DiscoveredController.genericPrefix(index)))"
+                    + (controller.seed != nil ? "?" : "")
+            } + scopeResolvedFields
         rejectGenericWhereClauses()
         let body = """
             struct Conformer\(conformerGenericClause): APIProtocol {
@@ -103,6 +104,67 @@ extension DirectDispatchEmitter {
             \(guarded(body))
                 }
             """
+    }
+
+    /// The local a graph-aware parameter is bound into, before the handler call.
+    private func scopeResolvedLocal(_ parameter: BoundParameter) -> String {
+        "wireOpenAPIResolved_\(parameter.name)"
+    }
+
+    /// One `let` per graph-aware parameter, calling the worker the wrapper named.
+    ///
+    /// The `guard` is the same shape the request-scoped subject's is, and unreachable for the same reason:
+    /// only a per-request rebuild dispatches, and it fills every one of these. `name:` is the attribute's
+    /// argument — the *action* — which is what a worker keys its decision on.
+    private func scopeResolvedBinds(_ operation: DiscoveredOperation, indent: String) -> String {
+        let binds = operation.parameters.filter(\.isScopeResolved).compactMap { parameter -> String? in
+            guard let worker = parameter.worker else { return nil }
+            return """
+                \(indent)guard let \(scopeResolvedLocal(parameter))Worker = \(workerField(worker)),
+                \(indent)    let wireOpenAPIBoundRequest = \(scopeResolvedRequestField),
+                \(indent)    let wireOpenAPIBoundPath = \(scopeResolvedPathParametersField)
+                \(indent)else {
+                \(indent)    preconditionFailure(
+                \(indent)        "WireOpenAPI: '\(operation.operationID)' was dispatched with no "
+                \(indent)            + "request-scoped '\(worker)' bound. The route terminal binds one "
+                \(indent)            + "before every call."
+                \(indent)    )
+                \(indent)}
+                \(indent)let \(scopeResolvedLocal(parameter)) = try await \(scopeResolvedLocal(parameter))Worker.bind(
+                \(indent)    name: "\(parameter.documentedName)", request: wireOpenAPIBoundRequest,
+                \(indent)    pathParameters: wireOpenAPIBoundPath, body: nil
+                \(indent))
+                """
+        }
+        return binds.isEmpty ? "" : binds.joined(separator: "\n") + "\n"
+    }
+
+    /// Every distinct worker a graph-aware parameter in this group names, sorted so the emitted file is
+    /// stable, plus the request and matched path parameters its `bind` takes.
+    var scopeResolvedWorkers: [String] {
+        Set(
+            controllers.flatMap(\.operations).flatMap(\.parameters).compactMap(\.worker)
+        ).sorted()
+    }
+
+    /// The conformer fields a graph-aware parameter needs.
+    ///
+    /// All optional, for the reason the request-scoped subjects are: the *template* conformer is built
+    /// once at registration with nothing bound, and only a per-request rebuild has a scope entry to fill
+    /// these from. Reaching one on the template means generated code was bypassed.
+    ///
+    /// The request and the matched path parameters come along because the worker's `bind` takes them and
+    /// a forwarder has neither — its argument is the decoded `Input`. Binding out in the route terminal
+    /// instead would put the call outside the `catch` clauses `@ErrorResponse` emits here, so a refusal
+    /// the author mapped would escape every mapping they wrote.
+    private var scopeResolvedFields: [String] {
+        let workers = scopeResolvedWorkers
+        guard !workers.isEmpty else { return [] }
+        return workers.map { "    let \(workerField($0)): \($0)?" }
+            + [
+                "    let \(scopeResolvedRequestField): HTTPRequest?",
+                "    let \(scopeResolvedPathParametersField): [String: Substring]?",
+            ]
     }
 
     /// `Operations.<X>` for an operation, spelled as this spec's namespace resolves it.
@@ -293,16 +355,23 @@ extension DirectDispatchEmitter {
                 \(indent)return wireOpenAPIOutput
                 """
         }
+        // A graph-aware parameter is bound before the call, in this frame, so a refusal it throws lands
+        // inside the `do` the `@ErrorResponse` catches wrap — the same turn a handler throw gets.
+        let resolved = scopeResolvedBinds(operation, indent: indent)
         let arguments = operation.parameters.map { parameter -> String in
             let label = parameter.label.map { "\($0): " } ?? ""
             // The body is unwrapped into a local first; everything else is read inline.
             guard !parameter.isBody else { return "\(label)wireOpenAPIBody" }
+            // Bound above rather than projected: what it produced never crossed the wire, so `Input` has
+            // no member for it.
+            guard !parameter.isScopeResolved else { return "\(label)\(scopeResolvedLocal(parameter))" }
             return "\(label)input.\(inputMember(for: parameter, in: operation))"
         }
         let prelude =
             validation
             + (operation.parameters.first(where: \.isBody)
                 .map { bodyBinding($0, in: operation, indent: indent) + "\n" } ?? "")
+            + resolved
         let call = "try await \(subject).\(operation.methodName)(\(arguments.joined(separator: ", ")))"
         let response = selectedResponse(for: operation)
         let caseName = GeneratorStatusNames.safeName(for: response.code)
@@ -407,7 +476,22 @@ extension DirectDispatchEmitter {
             }
             return "\(indent)    \(conformerField(controller)): \(value)"
         }
-        return "\(conformer)(\n\(arguments.joined(separator: ",\n"))\n\(indent))"
+        // The template conformer (`binding == nil`) is built once at registration and dispatches nothing
+        // request-scoped, so every worker is `nil` there — as every scoped subject already is. A
+        // per-request rebuild fills them from its own scope entry, which is the only thing that has one.
+        let workers = scopeResolvedWorkers.map { worker -> String in
+            let value = binding == nil ? "nil" : "wireOpenAPIEntry.\(scopeYieldFieldName(forType: worker))"
+            return "\(indent)    \(workerField(worker)): \(value)"
+        }
+        let context =
+            scopeResolvedWorkers.isEmpty
+            ? []
+            : [
+                "\(indent)    \(scopeResolvedRequestField): \(binding == nil ? "nil" : "request")",
+                "\(indent)    \(scopeResolvedPathParametersField): \(binding == nil ? "nil" : "parameters")",
+            ]
+        let all = arguments + workers + context
+        return "\(conformer)(\n\(all.joined(separator: ",\n"))\n\(indent))"
     }
 }
 
