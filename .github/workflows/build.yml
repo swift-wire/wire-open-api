@@ -139,6 +139,16 @@ jobs:
           # so its response embeds the path of the request that built it — two requests carrying each
           # other's path would mean one subject was shared.
           other=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/api/v1/tasks/99)
+          # A failure entering the *request scope*, which happens in the route terminal — one level
+          # outside every catch the conformer emits. Without the terminal branching on it there is no
+          # response to write at all and the connection is dropped; with it, the controller's own
+          # @ErrorResponse answers, and the global middleware's header still reaches the refusal because
+          # it goes out through the same wrapping sender a served response does.
+          gated=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/api/v1/tasks/42/gated)
+          gatedOK=$(curl -s -w ' [%{http_code}]' -H 'x-user: ada' \
+            http://127.0.0.1:8080/api/v1/tasks/42/gated)
+          gatedServedBy=$(curl -s -D - -o /dev/null http://127.0.0.1:8080/api/v1/tasks/42/gated \
+            | tr -d '\r' | awk 'tolower($1)=="x-served-by:"{print $2}')
           # The second document, under its own `servers:` prefix, from its own module.
           order=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/api/v2/orders/7)
           order2=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/api/v2/orders/9)
@@ -267,6 +277,16 @@ jobs:
             *'"title":"task-99 via /api/v1/tasks/99"'*"[200]") ;;
             *) echo "the request-scoped subject did not follow the request"; exit 1;;
           esac
+          echo "=== scope entry that refuses ==="
+          echo "GET .../gated            → $gated"
+          echo "GET .../gated (x-user)   → $gatedOK"
+          case "$gated" in *'"message":"no user"'*"[401]") ;;
+            *) echo "a scope-entry failure was not answered by the controller's mapping"; exit 1;; esac
+          case "$(plain "$gatedOK")" in *'"title":"task-42 for ada"'*"[200]") ;;
+            *) echo "the gated operation did not serve a request that passed the scope"; exit 1;; esac
+          [ "$gatedServedBy" = wire-open-api ] || {
+            echo "a global @Middleware's header did not reach the scope-entry refusal"; exit 1; }
+
           echo "=== scope log ==="; grep -E '^scope:' serverlog.txt || true
           grep -q '^scope: constructed for /api/v1/tasks/42' serverlog.txt \
             || { echo "the request scope was not entered for the first request"; exit 1; }

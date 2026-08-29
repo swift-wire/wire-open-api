@@ -80,6 +80,30 @@ struct TaskListController { @RawOperation func listTasks(…) … }
 the same document, does neither. A request enters only the scope of the controller owning
 the operation it dispatches, so nothing is built that the request does not use.
 
+**A scope that refuses is answered by the controller's `@ErrorResponse`.** Entering the scope
+happens in the route terminal rather than in the generated forwarder — the entry is what produces
+the subject the forwarder is built around, and the scope has to outlive the response so teardown
+runs after it — so a `@Scoped(seed:)` binding that throws is outside every `catch` the forwarder
+emits. The terminal branches on that failure and answers it with the mappings written on the
+controller:
+
+```swift
+@Scoped(seed: HTTPRequest.self)
+@OpenAPIController()
+@ErrorResponse(Unauthenticated.self, .unauthorized, { _ in Problem(message: "no user") })
+struct GatedTaskController {
+    @Inject let gate: RequestGate   // throws while the scope is built
+    @Operation func gatedTask(@Path id: String) async throws -> Task { … }
+}
+```
+
+Controller scope is the only scope this can be written at: one entry serves every operation the
+controller implements, so a failure entering it is not attributable to any one of them. The
+existing rule that a controller-scope mapping's status must be declared by every operation is what
+makes the answer one the document describes whichever operation was asked for — and for a scoped
+controller that now holds even where an operation maps the same error itself, since scope entry
+precedes dispatch and the shadowing forwarder never runs.
+
 ### Several specs in one app
 
 One document per target, so a second document lives in its own module — its `openapi.yaml`,

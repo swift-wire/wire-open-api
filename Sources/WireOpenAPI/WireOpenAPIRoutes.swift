@@ -16,6 +16,74 @@ public import WireMVC
 /// decodes `Input` and encodes `Output`, so `@JSONBody`'s content-type rules and WireMVC's own decoding
 /// stay separate concerns. Only the registration boundary moves.
 public enum WireOpenAPIRoutes {
+    /// Enter a request scope, keeping the failure rather than throwing it.
+    ///
+    /// Exists because of *where* scope entry sits. The generated terminal enters the scope before it calls
+    /// ``invoke(handler:request:pathParameters:reader:sender:rejectionResponse:operationID:maximumBodySize:)``,
+    /// and it has to: the entry produces the subject the conformer is built around, and the scope has to
+    /// outlive the response so teardown can run after it. That puts the entry outside every `catch` the
+    /// conformer emits, so a `@Scoped(seed:)` binding that throws — an unauthenticated request failing to
+    /// build a `Caller` — used to escape to the router unmapped, which answers nothing at all. The terminal
+    /// now branches on this and refuses through ``refuse(_:mapped:sender:maximumBodySize:)`` instead.
+    ///
+    /// A `Result` rather than a `do`/`catch` at the call site, because the generated code cannot name what
+    /// it caught: the scope entry's type is a struct swift-wire synthesised, so there is no spelling for
+    /// the `var` a `do`/`catch` would have to assign into. Generic over `Entry` for the same reason — the
+    /// name never appears.
+    public static nonisolated(nonsending) func enteringScope<Entry>(
+        _ enter: () async throws -> Entry
+    ) async -> Result<Entry, any Error> {
+        do {
+            return .success(try await enter())
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    /// Answer an error thrown *before* the terminal ran — today, one thrown entering the request scope.
+    ///
+    /// The same two tiers ``invoke(handler:request:pathParameters:reader:sender:rejectionResponse:operationID:maximumBodySize:)``
+    /// applies to a rejection, in the same order, one level further out: the author's own `@ErrorResponse`
+    /// mappings first, then the runtime's `HTTPResponseConvertible`, and otherwise the error propagates
+    /// unchanged so nothing is silently swallowed.
+    ///
+    /// `mapped` carries the **controller-scope** mappings only, and that is a deliberate narrowing rather
+    /// than an oversight. One scope entry serves every operation on the controller, so a failure entering
+    /// it is not attributable to any one of them; a mapping written on a single `@Operation` was describing
+    /// that operation's handler. The generator already requires a controller-scope mapping's status to be
+    /// declared by *every* operation on the controller, which is exactly the condition that makes this
+    /// answer describable by the document whichever operation was asked for.
+    ///
+    /// The request body is never read here. There is nothing to read it for — the handler will not run —
+    /// and a refusal that predates the scope is the one place in this file where not draining the body is
+    /// the point rather than an oversight.
+    public static nonisolated(nonsending) func refuse<
+        Sender: HTTPResponseSender & ~Copyable & SendableMetatype
+    >(
+        _ error: any Error,
+        mapped rejectionResponse: (any Error) -> (HTTPResponse, HTTPBody?)?,
+        sender: consuming Sender,
+        maximumBodySize: Int = 1_000_000
+    ) async throws where Sender.Writer: ~Copyable {
+        let response: HTTPResponse
+        let responseBody: HTTPBody?
+        if let mapped = rejectionResponse(error) {
+            (response, responseBody) = mapped
+        } else if let convertible = error as? any HTTPResponseConvertible {
+            response = HTTPResponse(status: convertible.httpStatus, headerFields: convertible.httpHeaderFields)
+            responseBody = convertible.httpBody
+        } else {
+            throw error
+        }
+        if let responseBody {
+            let collected = try await [UInt8](collecting: responseBody, upTo: maximumBodySize)
+            var buffer = UniqueArray<UInt8>(copying: collected)
+            try await sender.sendAndFinish(response, buffer: &buffer)
+        } else {
+            try await sender.sendAndFinish(response)
+        }
+    }
+
     /// The terminal a generated witness calls, inside the fold. Takes the box's already-projected
     /// contents rather than the raw handler arguments, since with middleware the reader and sender reach
     /// it through `withPendingContents`.

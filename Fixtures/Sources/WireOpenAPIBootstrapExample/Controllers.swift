@@ -51,6 +51,25 @@ struct RequestIdentity: Sendable {
     }
 }
 
+/// Thrown while **constructing** a request scope, which is the whole point of it: it is not a handler's
+/// refusal, and no `catch` inside the generated forwarder can see it.
+struct Unauthenticated: Error {}
+
+/// A request-scoped binding that **fails to build**, which is the shape an authentication check takes in
+/// this model — a `401` is a binding that could not be constructed, not a branch a handler took.
+///
+/// `RequestIdentity` above is the same lifetime and never throws; this one exists to drive the path where
+/// scope entry itself fails. What separates them is a header, so one request can exercise each.
+@Scoped(seed: HTTPRequest.self)
+struct RequestGate: Sendable {
+    let user: String
+
+    @Inject init(seed: HTTPRequest) throws {
+        guard let user = seed.headerFields[HTTPField.Name("x-user")!] else { throw Unauthenticated() }
+        self.user = user
+    }
+}
+
 // MARK: - spec-driven
 
 /// `@OpenAPIController` marks it. The **bare** form means this target's own document — the one generated
@@ -272,6 +291,36 @@ struct TaskListController<Store: TaskStoring> {
 /// Its types are written qualified, and must be: the bare `Operations` here resolves to *this* target's
 /// own generated types — a module's own declarations win over imported ones — which describe the Tasks
 /// document and have no `ListOrders`.
+/// **A scope that refuses, answered by the controller's own `@ErrorResponse`.**
+///
+/// The seam this exists for: `_wireEnterScope` runs in the route *terminal*, one level outside the
+/// forwarder the conformer emits, because the entry is what produces the subject the conformer is built
+/// around and the scope has to outlive the response. So a `@Scoped(seed:)` binding that throws is not
+/// something any `catch` in there can see — it used to reach the router with no response to write, which
+/// is a dropped connection rather than a status.
+///
+/// The mapping is written at **controller** scope, and that is the only scope this can be written at: one
+/// scope entry serves every operation the controller implements, so a failure entering it is not
+/// attributable to any single one of them. The generator's existing rule — a controller-scope mapping's
+/// status must be declared by every operation on the controller — is what makes the answer describable by
+/// the document whichever operation was asked for. Here there is one, and it declares `401`.
+///
+/// Its own controller rather than a mapping on `TaskController` so the rule stays cheap to satisfy:
+/// adding `401` to a controller means adding it to every operation that controller serves.
+@Scoped(seed: HTTPRequest.self)
+@OpenAPIController()
+@ErrorResponse(Unauthenticated.self, .unauthorized, { _ in Components.Schemas.Problem(message: "no user") })
+struct GatedTaskController {
+    @Inject let gate: RequestGate
+
+    /// Never entered without an `x-user` header, and not because it checks: the check is a precondition of
+    /// this type existing, since `RequestGate` is constructed with it as the scope is built.
+    @Operation
+    func gatedTask(@Path id: String) async throws -> Components.Schemas.Task {
+        .init(id: id, title: "task-\(id) for \(gate.user)", at: fixtureDate)
+    }
+}
+
 @Singleton
 @OpenAPIController(spec: "OrdersAPI")
 struct OrderSummaryController {

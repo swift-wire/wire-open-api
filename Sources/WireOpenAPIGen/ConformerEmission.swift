@@ -141,10 +141,24 @@ extension DirectDispatchEmitter {
 
     /// Every distinct worker a graph-aware parameter in this group names, sorted so the emitted file is
     /// stable, plus the request and matched path parameters its `bind` takes.
+    ///
+    /// Spec-wide, because the conformer is: one type implements the whole document, so it carries a field
+    /// for every worker any of its operations needs. Which of those fields a given rebuild can *fill* is a
+    /// different question — see ``scopeResolvedWorkers(of:)``.
     var scopeResolvedWorkers: [String] {
         Set(
             controllers.flatMap(\.operations).flatMap(\.parameters).compactMap(\.worker)
         ).sorted()
+    }
+
+    /// The workers **one controller's** operations name — the ones its own scope entry yields.
+    ///
+    /// A rebuild enters exactly one scope, and swift-wire yields on that entry only what the parameters of
+    /// that controller's methods asked for. Filling every spec-wide field from it therefore names members
+    /// the entry does not have, which is a compile error in emitted code and needs a second scoped
+    /// controller in one document to reach: with one, the two sets are equal and nothing is wrong.
+    func scopeResolvedWorkers(of controller: DiscoveredController) -> Set<String> {
+        Set(controller.operations.flatMap(\.parameters).compactMap(\.worker))
     }
 
     /// The conformer fields a graph-aware parameter needs.
@@ -258,20 +272,58 @@ extension DirectDispatchEmitter {
     /// The `rejectionResponse:` closure the terminal consults — the mappings that can only be matched out
     /// there, in the order they were written.
     ///
-    /// A `ServerError` is unwrapped first: the runtime puts the real cause in its public
-    /// `underlyingError`, which for a body it could not parse is a `DecodingError`. Statuses are echoed as
-    /// the author wrote them, because out here the response is assembled directly rather than being one of
-    /// the document's cases — and a request that failed to decode never became this operation's `Input`,
-    /// so the operation's documented responses do not describe it.
+    /// A request that failed to decode never became this operation's `Input`, so the operation's
+    /// documented responses do not describe it, which is why these statuses are echoed as written rather
+    /// than resolved against the document.
     func terminalRejectionClosure(
         _ controller: DiscoveredController,
         _ operation: DiscoveredOperation,
         indent: String
     ) -> String? {
+        rejectionClosure(
+            (operation.errorMappings + controller.errorMappings).filter(\.arrivesAtTerminal),
+            opening: "rejectionResponse: { wireOpenAPIRejection in",
+            closing: "},",
+            indent: indent
+        )
+    }
+
+    /// The closure that answers a failure entering the **request scope** — the mappings written on the
+    /// controller, matched one level outside the forwarder that would normally have had them.
+    ///
+    /// Controller-scope only, and the narrowing is the design rather than a shortcut. One scope entry
+    /// serves every operation the controller implements, so a failure entering it is not attributable to
+    /// any one of them, and a mapping written on a single `@Operation` was describing that operation's
+    /// handler. `diagnoseControllerErrorMappings` already refuses a controller-scope mapping whose status
+    /// some operation does not declare, which is precisely the condition that makes this answer one the
+    /// document describes whichever operation was asked for.
+    ///
+    /// `nil` when the controller wrote none, and the terminal then emits its original straight-line shape:
+    /// there is nothing to answer with, so nothing is gained by routing the throw through a branch.
+    func scopeEntryRejectionClosure(_ controller: DiscoveredController, indent: String) -> String? {
+        rejectionClosure(
+            controller.errorMappings,
+            opening: "mapped: { wireOpenAPIRejection in",
+            closing: "},",
+            indent: indent
+        )
+    }
+
+    /// The shared body of both: a `(any Error) -> (HTTPResponse, HTTPBody?)?` written out as clauses in
+    /// the order the author wrote the mappings, first match wins, `nil` for no match.
+    ///
+    /// A `ServerError` is unwrapped first: the runtime puts the real cause in its public
+    /// `underlyingError`, which for a body it could not parse is a `DecodingError`. Statuses are echoed as
+    /// the author wrote them, because out here the response is assembled directly rather than being one of
+    /// the document's cases.
+    private func rejectionClosure(
+        _ candidates: [ErrorMapping],
+        opening: String,
+        closing: String,
+        indent: String
+    ) -> String? {
         var seen: Set<String> = []
-        let mappings = (operation.errorMappings + controller.errorMappings)
-            .filter(\.arrivesAtTerminal)
-            .filter { seen.insert($0.errorType).inserted }
+        let mappings = candidates.filter { seen.insert($0.errorType).inserted }
         guard !mappings.isEmpty else { return nil }
         let clauses = mappings.map { mapping -> String in
             let isCatchAll = ["Error", "Swift.Error"].contains(mapping.errorType)
@@ -314,12 +366,12 @@ extension DirectDispatchEmitter {
                 """
         }
         return """
-            \(indent)rejectionResponse: { wireOpenAPIRejection in
+            \(indent)\(opening)
             \(indent)    let wireOpenAPICause =
             \(indent)        (wireOpenAPIRejection as? ServerError)?.underlyingError ?? wireOpenAPIRejection
             \(clauses.joined(separator: "\n"))
             \(indent)    return nil
-            \(indent)},
+            \(indent)\(closing)
             """
     }
 
@@ -478,9 +530,14 @@ extension DirectDispatchEmitter {
         }
         // The template conformer (`binding == nil`) is built once at registration and dispatches nothing
         // request-scoped, so every worker is `nil` there — as every scoped subject already is. A
-        // per-request rebuild fills them from its own scope entry, which is the only thing that has one.
+        // per-request rebuild fills them from its own scope entry, which is the only thing that has one —
+        // and fills only the ones *that* entry yields, since a sibling scoped controller's workers are not
+        // on it and naming them would be reaching for a member that does not exist.
+        let bindable = binding.map(scopeResolvedWorkers(of:)) ?? []
         let workers = scopeResolvedWorkers.map { worker -> String in
-            let value = binding == nil ? "nil" : "wireOpenAPIEntry.\(scopeYieldFieldName(forType: worker))"
+            let value =
+                bindable.contains(worker)
+                ? "wireOpenAPIEntry.\(scopeYieldFieldName(forType: worker))" : "nil"
             return "\(indent)    \(workerField(worker)): \(value)"
         }
         let context =
