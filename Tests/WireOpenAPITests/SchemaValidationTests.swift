@@ -1,4 +1,8 @@
 import HTTPTypes
+// `MemberImportVisibility`: this file reads `httpBody` off a failure and collects an `HTTPBody`,
+// both declared by the OpenAPI runtime, so it imports the module that declares them rather than
+// relying on one reaching it through `WireOpenAPI`.
+import OpenAPIRuntime
 import Testing
 
 @testable import WireOpenAPI

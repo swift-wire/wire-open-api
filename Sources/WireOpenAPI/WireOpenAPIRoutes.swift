@@ -1,7 +1,7 @@
 import BasicContainers
-import HTTPAPIs
-import HTTPTypes
-import OpenAPIRuntime
+public import HTTPAPIs
+public import HTTPTypes
+public import OpenAPIRuntime
 public import WireMVC
 
 /// Mounts OpenAPI operations as **WireMVC routes** — the inbound counterpart to

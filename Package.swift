@@ -10,6 +10,58 @@ import PackageDescription
 // Depends on pushed swift-wire main. The end-to-end validation lives in the `Fixtures` package, which
 // runs the real swift-openapi-generator and serves over HTTP — the stand-in example that used to sit
 // here proved less than the fixture does and could not survive per-operation dispatch.
+// The same list wire-mvc's `proposalSettings` carries, verbatim — this package's API is compiled with
+// them and its consumers already are, so agreeing is the whole point. It requires a Swift 6.4 toolchain.
+//
+// **Applied to the runtime targets and their tests, not to the tooling**, which is also wire-mvc's split:
+// its macro plugin, codegen library, codegen executable and their tests carry none of this, and the same
+// targets here carry none either. They are host-side SwiftSyntax programs that emit text; nothing about
+// their compilation reaches a consumer, and `InternalImportsByDefault` in particular is only noise there —
+// a macro plugin's public `PeerMacro` conformance would have to publicly import `SwiftSyntaxMacros` to
+// satisfy a rule that protects an API surface these targets do not have.
+//
+// **`NonisolatedNonsendingByDefault`** is the one that was actually costing something, and wire-open-api
+// was the one link in the chain without it: swift-wire and wire-mvc enable it on every target, this
+// package's own `Fixtures` enable it, and the library they all meet in did not. A bare
+// `@Sendable () async -> …` written here therefore meant `@concurrent`, while the identical spelling in
+// the generated code this package hands types to meant `nonisolated(nonsending)`. That is the shape that
+// already cost a day upstream: `WireScopeEntry` shipped a teardown requirement, swift-wire's own suite
+// passed because a package agrees with itself, and the emitted conformance was refused in a consumer.
+//
+// Nothing here needed it — `WireOpenAPIRoutes.invoke` and its neighbours already spell
+// `nonisolated(nonsending)` by hand, which is what this mismatch looks like when you meet it one
+// declaration at a time rather than as a rule. Those spellings are now redundant rather than wrong and
+// stay: they say what the function does where a reader asks.
+//
+// Two things about adopting it, both measured rather than assumed:
+//
+// - **Source compatibility is not at risk.** One public async function type changes meaning — `invoke`'s
+//   `handler:`. It only ever receives a closure *literal* from generated code, and a literal is typed by
+//   its context, so no consumer's own default reaches it. And there is no consumer with the feature off:
+//   turning it off in the fixtures fails on `Middleware`, whose `intercept` requirement is
+//   `nonisolated(nonsending)` because wire-mvc enables this, so an app folding middleware already had to.
+// - **It changes mangled symbols.** A consumer with a warm build directory gets an undefined-symbol link
+//   error naming these functions rather than a rebuild. `swift package clean` is the whole fix, and it is
+//   worth expecting rather than debugging — the fixtures did exactly this here.
+//
+// The rest cost one change each and no behaviour: `InternalImportsByDefault` made `Wire`, `HTTPAPIs`,
+// `HTTPTypes` and `OpenAPIRuntime` public imports where the runtime's own public signatures name them,
+// and `MemberImportVisibility` made one test target import `OpenAPIRuntime` for the members it reads.
+// `ExistentialAny`, `strictMemorySafety` and the lifetime features needed nothing: the sources already
+// satisfied them.
+let wireOpenAPISettings: [SwiftSetting] = [
+    .strictMemorySafety(),
+    .enableExperimentalFeature("SuppressedAssociatedTypesWithDefaults"),
+    .enableExperimentalFeature("LifetimeDependence"),
+    .enableExperimentalFeature("Lifetimes"),
+    .enableUpcomingFeature("LifetimeDependence"),
+    .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+    .enableUpcomingFeature("InferIsolatedConformances"),
+    .enableUpcomingFeature("ExistentialAny"),
+    .enableUpcomingFeature("MemberImportVisibility"),
+    .enableUpcomingFeature("InternalImportsByDefault"),
+]
+
 let package = Package(
     name: "wire-open-api",
     platforms: [.macOS(.v26)],
@@ -64,7 +116,8 @@ let package = Package(
                 // Operations are collated as WireMVC routes, so the routing surface is a core
                 // dependency rather than an opt-in module.
                 .product(name: "WireMVC", package: "wire-mvc"),
-            ]
+            ],
+            swiftSettings: wireOpenAPISettings
         ),
         // The domain half of the codegen — fills the body hole WireGen leaves on each aggregate proxy.
         // The copied naming transform, alone in its own target so the copy is obvious and so tests can
@@ -113,7 +166,16 @@ let package = Package(
         .testTarget(name: "WireOpenAPINamingTests", dependencies: ["WireOpenAPINaming"]),
         // The runtime's own logic — the status rule and the failure cap — which is decided rather than
         // walked, so it is worth asserting directly instead of only through the fixture's HTTP round-trip.
-        .testTarget(name: "WireOpenAPITests", dependencies: ["WireOpenAPI"]),
+        .testTarget(
+            name: "WireOpenAPITests",
+            dependencies: [
+                "WireOpenAPI",
+                // Named directly because `MemberImportVisibility` makes this file import what it names:
+                // the failure's `httpBody` and `HTTPBody` are the OpenAPI runtime's, not WireOpenAPI's.
+                .product(name: "OpenAPIRuntime", package: "swift-openapi-runtime"),
+            ],
+            swiftSettings: wireOpenAPISettings
+        ),
         .testTarget(
             name: "WireOpenAPIMacrosTests",
             dependencies: [
