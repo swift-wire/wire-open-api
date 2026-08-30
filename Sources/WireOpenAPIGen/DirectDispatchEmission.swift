@@ -256,40 +256,42 @@ extension DirectDispatchEmitter {
             \(body)    .apiPathComponentsWithServerPrefix("\(route.path)")
             \(body)builder.register(method: .\(route.method.lowercased()), path: wireOpenAPIPath)
             """
+        // The registry is **linear** (wire-mvc #148), so it cannot be read off a borrow: it comes out of one
+        // consuming `takeContents()`, together with the app's real context when the fold needs that too.
         guard !entries.isEmpty else {
             return """
                 \(indent)do {
                 \(register) { request, requestContext, parameters, reader, sender in
-                \(body)    let wireOpenAPIContents = requestContext.takeContents()
-                \(body)    let wireOpenAPIRegistry = wireOpenAPIContents.responseHeaders.take()
-                \(terminal(controller, operation, indent: body + "    "))
-                \(body)}
+                \(indent)    let wireOpenAPIRegistry = requestContext.takeContents().responseHeaders.take()
+                \(terminal(controller, operation, indent: indent + "    "))
                 \(indent)}
                 """
         }
+        // Two names for one value, as wire-mvc's own fold does: this one goes *into* the box and is
+        // consumed by it, and the terminal binds the one the box hands back. Naming them apart keeps the
+        // two lifetimes legible — and taking the registry off the box's destructure rather than off a
+        // captured local is what keeps the sender handable on `sending`.
         return """
             \(indent)do {
             \(register) {
-            \(body)    request, requestContext, parameters, reader, responseSender in
-            \(body)    let wireOpenAPIContents = requestContext.takeContents()
-            \(body)    let wireOpenAPIBase = wireOpenAPIContents.base
-            \(body)    let wireOpenAPIBox = RequestResponseMiddlewareBox.pending(
-            \(body)        request: request, requestContext: wireOpenAPIBase,
-            \(body)        route: RouteContext(template: wireOpenAPIPath, pathParameters: parameters),
-            \(body)        reader: reader,
-            \(body)        responseSender: responseSender,
-            \(body)        responseHeaders: wireOpenAPIContents.responseHeaders.take()
-            \(body)    )
-            \(body)    let wireOpenAPIChain = wireCompose {
+            \(indent)    request, requestContext, parameters, reader, responseSender in
+            \(indent)    let wireOpenAPIContents = requestContext.takeContents()
+            \(indent)    let wireOpenAPIFoldRegistry = wireOpenAPIContents.responseHeaders.take()
+            \(indent)    let wireOpenAPIBox = RequestResponseMiddlewareBox.pending(
+            \(indent)        request: request, requestContext: wireOpenAPIContents.base,
+            \(indent)        route: RouteContext(template: "\(route.path)", pathParameters: parameters),
+            \(indent)        reader: reader,
+            \(indent)        responseSender: responseSender, responseHeaders: wireOpenAPIFoldRegistry
+            \(indent)    )
+            \(indent)    let wireOpenAPIChain = wireCompose {
             \(entries.joined(separator: "\n"))
-            \(body)    }
-            \(body)    try await wireOpenAPIChain.intercept(input: wireOpenAPIBox) { wireOpenAPIFinalBox in
-            \(body)        try await wireOpenAPIFinalBox.withPendingContents {
-            \(body)            request, _, _, reader, sender, wireOpenAPIRegistry in
-            \(terminal(controller, operation, indent: body + "            "))
-            \(body)        }
-            \(body)    }
-            \(body)}
+            \(indent)    }
+            \(indent)    try await wireOpenAPIChain.intercept(input: wireOpenAPIBox) { wireOpenAPIFinalBox in
+            \(indent)        try await wireOpenAPIFinalBox.withPendingContents {
+            \(indent)            request, _, _, reader, sender, wireOpenAPIRegistry in
+            \(terminal(controller, operation, indent: indent + "            "))
+            \(indent)        }
+            \(indent)    }
             \(indent)}
             """
     }
