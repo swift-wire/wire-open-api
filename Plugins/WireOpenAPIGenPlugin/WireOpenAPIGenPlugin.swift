@@ -170,7 +170,6 @@ private func openAPIConfigs(in module: SourceModuleTarget) -> [URL] {
         .filter { $0.lastPathComponent == "openapi-generator-config.yaml" }
 }
 
-
 /// Whether `module` can declare Wire bindings, WireMVC controllers, or WireOpenAPI operations — the
 /// signal that replaced the hand-declared `_WireExports.swift` marker when swift-wire retired it (M7b.5).
 ///
