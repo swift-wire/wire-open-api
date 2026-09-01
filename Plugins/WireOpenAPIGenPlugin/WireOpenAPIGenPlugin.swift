@@ -30,7 +30,8 @@ struct WireOpenAPIGenPlugin: BuildToolPlugin {
         let handlersURL = context.pluginWorkDirectoryURL.appendingPathComponent("_WireOpenAPIHandlers.swift")
 
         // Cross-module composition, the same rule swift-wire's own plugin applies: re-parse the sources of
-        // every Wire-aware dependency (one that ships a `_WireExports.swift` marker) so its bindings and
+        // every Wire-aware dependency (one that depends on the `Wire` product — swift-wire retired the
+        // `_WireExports.swift` marker in M7b.5) so its bindings and
         // controllers compose into this consumer. Both tools read the same set — a controller may live in a
         // shared library while its proxy is emitted here.
         var dependencyGroups:
@@ -57,9 +58,8 @@ struct WireOpenAPIGenPlugin: BuildToolPlugin {
                 guard let dependencyModule = dependencyTarget.sourceModule,
                     !seenModules.contains(dependencyModule.moduleName)
                 else { continue }
+                guard dependsOnWireModules(dependencyModule) else { continue }
                 let dependencySources = dependencyModule.sourceFiles(withSuffix: "swift").map(\.url)
-                guard dependencySources.contains(where: { $0.lastPathComponent == "_WireExports.swift" })
-                else { continue }
                 seenModules.insert(dependencyModule.moduleName)
                 // A dependency may own a whole document — its own generated `APIProtocol` and the
                 // controllers implementing it. That is how one app serves two specs, so its document is
@@ -169,3 +169,28 @@ private func openAPIConfigs(in module: SourceModuleTarget) -> [URL] {
         .map(\.url)
         .filter { $0.lastPathComponent == "openapi-generator-config.yaml" }
 }
+
+/// Whether `module` can declare Wire bindings, WireMVC controllers, or WireOpenAPI operations — the
+/// signal that replaced the hand-declared `_WireExports.swift` marker when swift-wire retired it (M7b.5).
+///
+/// A target that declares any of them must import `Wire` (for `@Singleton` / `@Scoped` / `@Inject`),
+/// `WireMVC` (for `@Controller` / `@Middleware`) or `WireOpenAPI`, and an import requires a dependency the
+/// plugin can read at plan time. So the predicate cannot under-fire. Over-firing is harmless: a scanned
+/// library that declares nothing contributes nothing, and since swift-wire's reachability pruning anything
+/// it does declare that this consumer never reaches is stripped before it can cost anything or fail to
+/// resolve.
+///
+/// Both dependency kinds are matched by name, because inside this package `WireOpenAPI` is a target
+/// dependency while to every consumer it is a product.
+private func dependsOnWireModules(_ module: SourceModuleTarget) -> Bool {
+    module.dependencies.contains { dependency in
+        switch dependency {
+        case .target(let target): return wireModuleNames.contains(target.name)
+        case .product(let product): return wireModuleNames.contains(product.name)
+        @unknown default: return false
+        }
+    }
+}
+
+/// The modules a Wire-aware library imports, and therefore depends on.
+private let wireModuleNames: Set<String> = ["Wire", "WireMVC", "WireOpenAPI"]

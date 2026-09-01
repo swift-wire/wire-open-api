@@ -73,7 +73,7 @@ let package = Package(
         // A second document, in its own module: its `openapi.yaml`, the types swift-openapi-generator
         // makes from it, and the controller implementing them. It runs only the OpenAPI generator —
         // WireGen runs once, in the app, and re-parses this module's sources because of its
-        // `_WireExports.swift` marker. That is what puts the proxy for this spec in the app.
+        // dependency on the `Wire` product. That is what puts the proxy for this spec in the app.
         .target(
             name: "OrdersAPI",
             dependencies: [

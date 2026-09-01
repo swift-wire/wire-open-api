@@ -118,7 +118,7 @@ the types swift-openapi-generator makes from it, and the controllers implementin
 ```
 
 That module needs `accessModifier: public` in its generator config and a
-`_WireExports.swift` marker; the app depends on it, and `@OpenAPIController(spec: "OrdersAPI")`
+dependency on the `Wire` product; the app depends on it, and `@OpenAPIController(spec: "OrdersAPI")`
 names it. WireGen still runs once, in the app, so that is where the proxy is emitted.
 
 The two forms mean one thing each. Bare `@OpenAPIController()` is **this target's own
