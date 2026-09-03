@@ -173,7 +173,11 @@ see the `m6d-request-scope-strategies` branch.
 
 ## Status
 
-Built. The adapter carries three layers, all shipped:
+Built. The adapter carries three layers, all shipped. Known gaps and deferrals are tracked as
+[issues](https://github.com/tachyonics/wire-open-api/issues), which are the source of truth for status —
+notably [#49](https://github.com/tachyonics/wire-open-api/issues/49): schema validation is written and
+tested but no codegen reaches it.
+
 
 - **The `ServerTransport` collation surface**, the `@OpenAPIController` macro, and a
   framework-free end-to-end example.
