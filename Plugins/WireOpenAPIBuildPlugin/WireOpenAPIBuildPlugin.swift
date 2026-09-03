@@ -9,7 +9,7 @@ import PackagePlugin
 ///   • `WireOpenAPIGen` (this package) — the `TransportContributor` conformance on those proxies.
 ///
 /// Orchestration is domain knowledge ("OpenAPI controllers need a witness generator"), so it lives with
-/// the adapter and WireGen stays structural — the same split spike-23 settled for WireMVC.
+/// the adapter and WireGen stays structural — the same split WireMVC uses.
 @main
 struct WireOpenAPIBuildPlugin: BuildToolPlugin {
     func createBuildCommands(context: PluginContext, target: Target) async throws -> [Command] {
@@ -25,8 +25,8 @@ struct WireOpenAPIBuildPlugin: BuildToolPlugin {
         let handlersURL = context.pluginWorkDirectoryURL.appendingPathComponent("_WireOpenAPIHandlers.swift")
 
         // Cross-module composition, the same rule swift-wire's own plugin applies: re-parse the sources of
-        // every Wire-aware dependency (one that depends on the `Wire` product — swift-wire retired the
-        // `_WireExports.swift` marker in M7b.5) so its bindings and
+        // every Wire-aware dependency (one that depends on the `Wire` product; the hand-declared
+        // `_WireExports.swift` marker this replaced is retired) so its bindings and
         // controllers compose into this consumer. Both tools read the same set — a controller may live in a
         // shared library while its proxy is emitted here.
         var dependencyGroups:
@@ -149,7 +149,7 @@ struct WireOpenAPIBuildPlugin: BuildToolPlugin {
 }
 
 /// A module's OpenAPI documents: *source* files of the target, never the generator's emitted Swift, which
-/// would be an undeclared build input (spike-28, finding 1). The generator's own config is not one.
+/// would be an undeclared build input. The generator's own config is not one.
 private func openAPIDocuments(in module: SourceModuleTarget) -> [URL] {
     module.sourceFiles
         .map(\.url)
@@ -183,7 +183,7 @@ private func openAPIConfigs(in module: SourceModuleTarget) -> [URL] {
 }
 
 /// Whether `module` can declare Wire bindings, WireMVC controllers, or WireOpenAPI operations — the
-/// signal that replaced the hand-declared `_WireExports.swift` marker when swift-wire retired it (M7b.5).
+/// signal that replaced the hand-declared `_WireExports.swift` marker swift-wire has since retired.
 ///
 /// A target that declares any of them must import `Wire` (for `@Singleton` / `@Scoped` / `@Inject`),
 /// `WireMVC` (for `@Controller` / `@Middleware`) or `WireOpenAPI`, and an import requires a dependency the

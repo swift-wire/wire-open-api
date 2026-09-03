@@ -6,7 +6,7 @@ import Yams
 // What the codegen needs from the OpenAPI document itself: the server prefix an operation registers
 // under, and where each operationId registers. Both are read from `openapi.yaml` — a *source* file of
 // the target — never from the OpenAPI generator's emitted Swift, which would be an undeclared build
-// input (spike-28, finding 1).
+// input.
 
 // MARK: - proxy field names
 

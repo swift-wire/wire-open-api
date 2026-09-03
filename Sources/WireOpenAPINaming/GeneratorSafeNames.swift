@@ -16,9 +16,9 @@ import Foundation
 // │ future upstream diff is readable. Improving it locally would make that diff useless.          │
 // └───────────────────────────────────────────────────────────────────────────────────────────────┘
 //
-// **Why a copy.** The typed shim (M6d.4) has to *name* generated symbols — `Operations.GetTask.Input`,
+// **Why a copy.** The typed shim has to *name* generated symbols — `Operations.GetTask.Input`,
 // `input.path.userId` — rather than copy spellings the author already wrote, which is what every earlier
-// milestone did. Those names come from this transform, applied to the document's operationIds and
+// untyped shim did. Those names come from this transform, applied to the document's operationIds and
 // parameter names. It is `internal` to `_OpenAPIGeneratorCore`: `NamingStrategy` is public but is only a
 // two-case enum naming *which* strategy, carrying none of the behaviour, so there is nothing to call.
 //

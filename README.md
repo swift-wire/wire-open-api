@@ -173,13 +173,15 @@ see the `m6d-request-scope-strategies` branch.
 
 ## Status
 
-M3 complete; M6d (advanced OpenAPI integration) in progress.
+Built. The adapter carries three layers, all shipped:
 
-- **M3.1–M3.3** — the `ServerTransport` collation surface, the `@OpenAPIController` macro,
-  and a framework-free end-to-end example. **Done.**
-- **M6d.0b** — the proxy cutover: adapter-owned build plugin, aggregate proxy per spec,
-  macro demoted to a marker. **Current.**
-- Next: OpenAPI operations mounted as WireMVC routes, so middleware, error tiers and the
-  composition root are shared with annotation-driven routes.
+- **The `ServerTransport` collation surface**, the `@OpenAPIController` macro, and a
+  framework-free end-to-end example.
+- **The proxy cutover** — an adapter-owned build plugin, one aggregate proxy per spec, and
+  the macro demoted to a marker.
+- **Operations mounted as WireMVC routes.** An `@Operation` contributes to
+  `WireMVCKeys.routeContributors` exactly as a `@Get` route does, so middleware, error tiers,
+  request scope, encoding and the composition root are expressed identically whether a route
+  came from an OpenAPI document or from an annotation. There is one routing model, not two.
 
 Depends on pushed swift-wire `main`; validated on macOS and Linux (see CI).

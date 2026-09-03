@@ -40,7 +40,7 @@ struct DirectDispatchEmitter {
     /// because the generator names them from nothing about the document. In a module importing both, a
     /// bare `Operations.GetTask.Input` is "ambiguous for type lookup", and that includes the spellings
     /// copied verbatim out of a controller that was unambiguous where it was written. Naming the module
-    /// is what resolves it (spike-28).
+    /// is what resolves it.
     let specModule: String?
     let operationRoutes: [String: OperationRoute]
     /// Every component schema by its document name, so a `$ref` can be emitted as a call to the
@@ -161,7 +161,8 @@ extension DirectDispatchEmitter {
         guard controller.seed != nil else {
             return "\(indent)let wireOpenAPIServer = wireOpenAPIServerTemplate\n" + call
         }
-        // Scope entry stays in the terminal, matching M5.4.3: the scope outlives the middleware chain
+        // Scope entry stays in the terminal, matching WireMVC's request-scoped route codegen: the scope
+        // outlives the middleware chain
         // wrapping it, and teardown runs after the response. Only this operation's own scope is entered.
         //
         // The server is *copied* and re-handlered, never constructed here: `UniversalServer.init` builds a
