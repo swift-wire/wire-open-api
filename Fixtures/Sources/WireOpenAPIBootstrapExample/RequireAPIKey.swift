@@ -3,7 +3,7 @@ import HTTPTypes
 import Wire
 import WireMVC
 
-/// One middleware component, applied to **both** kinds of route — the M6d.2 gate. It is an ordinary
+/// One middleware component, applied to **both** kinds of route — the shared-middleware gate. It is an ordinary
 /// proposal `Middleware` and an ordinary Wire binding; nothing about it knows whether the route it wraps
 /// came from an OpenAPI document or from a `@Get`. That is the whole claim of the unification: the same
 /// component, not two implementations of one policy.

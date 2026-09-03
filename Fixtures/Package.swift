@@ -85,7 +85,7 @@ let package = Package(
             swiftSettings: generatedPublicAPISettings,
             plugins: [.plugin(name: "OpenAPIGenerator", package: "swift-openapi-generator")]
         ),
-        // Three plugins on one target — the arrangement spike-28 gated: OpenAPIGenerator emits the spec's
+        // Three plugins on one target, in this order: OpenAPIGenerator emits the spec's
         // types and `registerHandlers`, then WireOpenAPIBuildPlugin runs WireGen (graph + aggregate proxy)
         // and WireOpenAPIGen (the proxy's conformances).
         .executableTarget(

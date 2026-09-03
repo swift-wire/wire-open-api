@@ -1,7 +1,7 @@
 package import Wire
 package import WireMVC
 
-// A global `@Middleware` that contributes a response header field. It exists to prove the thing M6d's
+// A global `@Middleware` that contributes a response header field. It exists to prove the thing
 // "one routing model, not two" requires: a global contribution must reach an `@Operation`'s response
 // exactly as it reaches a `@Get` route's. An OpenAPI terminal builds its own head inside
 // `WireOpenAPIRoutes.invoke`, so it takes the contributions through a wrapping sender — the same

@@ -90,7 +90,8 @@ let package = Package(
         // library, rather than by a dictionary walk that silently drops what it does not recognise.
         .package(url: "https://github.com/mattpolzin/OpenAPIKit", from: "6.1.0"),
         .package(url: "https://github.com/jpsim/Yams.git", "4.0.0"..<"7.0.0"),
-        // Operations are collated as WireMVC routes (M6d.1b), so wire-mvc is a core dependency. It is
+        // An `@Operation` is collated as a WireMVC route — it contributes to
+        // `WireMVCKeys.routeContributors` like a `@Get` does — so wire-mvc is a core dependency. It is
         // proposal-native (tools 6.4, macOS 26), which is why this package is too.
         // `ServerTransport` trait: serving the collated routes on Hummingbird/Vapor/Lambda goes through
         // `WireMVCServerTransport`, which the trait gates.

@@ -10,8 +10,8 @@ import WireMVCRouter
 
 // The composition root. There is no `main.swift`: `@WireMVCBootstrap` makes the plugin generate the
 // program entry point, which bootstraps the graph, registers **every** collated route contributor onto
-// the router — the OpenAPI operation and the `@Get` alike, because after M6d.1b they are the same kind
-// of thing — finalizes it, and serves.
+// the router — the OpenAPI operation and the `@Get` alike, because an `@Operation` contributes to
+// `WireMVCKeys.routeContributors` exactly as a `@Get` route does — they are the same kind of thing — finalizes it, and serves.
 //
 // That is the gate this fixture exists for: one app, one router, one `@NotFound`, both authoring styles.
 
@@ -20,7 +20,7 @@ import WireMVCRouter
 /// Unkeyed, and selected by type: this app has one app-wide coding, so there is nothing to tell apart
 /// and no name to invent. `EpochCoding` below is the case a key exists for.
 ///
-/// `sortsKeys` is the *observable* half of the M6d.6 gate. The dates agree because ISO8601 is now the
+/// `sortsKeys` is the *observable* half of the coding-unification gate. The dates agree because ISO8601 is now the
 /// default on both sides, which proves the two runtimes were unified but would look the same if the
 /// settings had never travelled. A key order nobody's default produces cannot: an OpenAPI operation
 /// serving sorted JSON has to have read the value declared here.
