@@ -23,7 +23,7 @@ on one graph.
 A consumer depends on **both** `WireOpenAPI` and `WireMVC` directly — Wire activates a
 dependency's keys only when it is a direct dependency, and the collation key is WireMVC's.
 
-See [swift-wire's WireOpenAPIDesign.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/WireOpenAPIDesign.md)
+See [swift-wire's WireOpenAPIDesign.md](Documentation/Notes/WireOpenAPIDesign.md)
 for the full design.
 
 ## Consumers apply `WireOpenAPIBuildPlugin`
