@@ -23,153 +23,61 @@ on one graph.
 A consumer depends on **both** `WireOpenAPI` and `WireMVC` directly — Wire activates a
 dependency's keys only when it is a direct dependency, and the collation key is WireMVC's.
 
-See [swift-wire's WireOpenAPIDesign.md](Documentation/Notes/WireOpenAPIDesign.md)
-for the full design.
+See [WireOpenAPIDesign.md](Documentation/Notes/WireOpenAPIDesign.md) for the full design.
 
-## Consumers apply `WireOpenAPIBuildPlugin`
+## Installation
 
-Not swift-wire's `WireBuildPlugin`. The adapter's plugin runs both tools over one source
-set: `WireGen` for the graph and the contributor-proxy structs, then `WireOpenAPIGen` for
-those proxies' `RouteContributor` witnesses.
+A consumer depends on **both** `WireOpenAPI` and `WireMVC`, and applies
+`WireOpenAPIBuildPlugin` rather than swift-wire's `WireBuildPlugin` — the adapter's plugin runs
+`WireGen` for the graph and `WireOpenAPIGen` for the route witnesses over one source set.
 
 ```swift
 .executableTarget(
     name: "App",
     dependencies: [
         .product(name: "WireOpenAPI", package: "wire-open-api"),
+        .product(name: "WireMVC", package: "wire-mvc"),
         .product(name: "Wire", package: "swift-wire"),
     ],
     plugins: [.plugin(name: "WireOpenAPIBuildPlugin", package: "wire-open-api")]
 )
 ```
 
-`@OpenAPIController` is a marker; it generates nothing. Controllers sharing a spec collate
-onto **one** proxy, because a document's operations are implemented against one generated
-`APIProtocol`. An app serving several documents names them:
-
 ```swift
-@Singleton @OpenAPIController(spec: "TaskAPI")
-struct TaskController: APIProtocol { … }
-```
-
-With a single spec the bare `@OpenAPIController` groups everything together. There is no
-base-path argument: the prefix belongs to the document's `servers:` block, applied by the
-runtime's own `apiPathComponentsWithServerPrefix`.
-
-### Several controllers may share one spec
-
-A document does not have to be one object's to serve. Operations are mounted individually,
-so each controller contributes the `@RawOperation`s it declares and the proxy holds them
-all; `APIProtocol` conformance is what makes the compiler check the set adds up. Declaring
-the same `operationId` twice is an error — one operation is mounted once.
-
-Scope and middleware stay per controller, not per spec:
-
-```swift
-@Scoped(seed: HTTPRequest.self)
-@OpenAPIController(spec: "TaskAPI")
-@Middleware(RequireAPIKeyKeys.factory)
-struct TaskController { @RawOperation func getTask(…) … }
-
 @Singleton
-@OpenAPIController(spec: "TaskAPI")
-struct TaskListController { @RawOperation func listTasks(…) … }
-```
+@OpenAPIController
+struct TaskController: APIProtocol {
+    @Inject var repository: TaskRepository
 
-`getTask` enters a request scope and folds `RequireAPIKey` around itself; `listTasks`, on
-the same document, does neither. A request enters only the scope of the controller owning
-the operation it dispatches, so nothing is built that the request does not use.
-
-**A scope that refuses is answered by the controller's `@ErrorResponse`.** Entering the scope
-happens in the route terminal rather than in the generated forwarder — the entry is what produces
-the subject the forwarder is built around, and the scope has to outlive the response so teardown
-runs after it — so a `@Scoped(seed:)` binding that throws is outside every `catch` the forwarder
-emits. The terminal branches on that failure and answers it with the mappings written on the
-controller:
-
-```swift
-@Scoped(seed: HTTPRequest.self)
-@OpenAPIController()
-@ErrorResponse(Unauthenticated.self, .unauthorized, { _ in Problem(message: "no user") })
-struct GatedTaskController {
-    @Inject let gate: RequestGate   // throws while the scope is built
-    @Operation func gatedTask(@Path id: String) async throws -> Task { … }
+    @Operation
+    func getTask(@Path id: String) async throws -> Task { try repository.find(id) }
 }
 ```
 
-Controller scope is the only scope this can be written at: one entry serves every operation the
-controller implements, so a failure entering it is not attributable to any one of them. The
-existing rule that a controller-scope mapping's status must be declared by every operation is what
-makes the answer one the document describes whichever operation was asked for — and for a scoped
-controller that now holds even where an operation maps the same error itself, since scope entry
-precedes dispatch and the shadowing forwarder never runs.
+Requires a Swift 6.4 toolchain, targets macOS 26 and Linux, and — for now — a
+[forked swift-openapi-generator](https://github.com/tachyonics/swift-openapi-generator/tree/swift-wire).
+That constraint is worth reading before adopting: see *The forked generator* in the documentation.
 
-### Several specs in one app
+## Documentation
 
-One document per target, so a second document lives in its own module — its `openapi.yaml`,
-the types swift-openapi-generator makes from it, and the controllers implementing them:
+The user-facing documentation is a DocC catalog — build it with
+`swift package generate-documentation --target WireOpenAPI`, or read the articles under
+[`Sources/WireOpenAPI/WireOpenAPI.docc`](Sources/WireOpenAPI/WireOpenAPI.docc):
 
-```swift
-.target(
-    name: "OrdersAPI",
-    dependencies: [.product(name: "WireOpenAPI", package: "wire-open-api"), …],
-    plugins: [.plugin(name: "OpenAPIGenerator", package: "swift-openapi-generator")]
-)
-```
+- **Getting started** — adding the package, writing a controller, and the two ways to implement
+  an operation.
+- **Documents** — several controllers sharing one spec, and several specs in one app.
+- **Serving** — the one call that serves them, and where a request-scoped controller's errors are
+  mapped.
+- **Constraints** — the forked generator, and the state of schema validation.
 
-That module needs `accessModifier: public` in its generator config and a
-dependency on the `Wire` product; the app depends on it, and `@OpenAPIController(spec: "OrdersAPI")`
-names it. WireGen still runs once, in the app, so that is where the proxy is emitted.
+Design notes recording *why* each decision was made are in
+[`Documentation/Notes`](Documentation/Notes); proposals not yet built are in
+[`Proposals`](Proposals).
 
-The two forms mean one thing each. Bare `@OpenAPIController()` is **this target's own
-document**; `@OpenAPIController(spec: "M")` says the generated `APIProtocol` is module `M`'s.
-A `spec:` naming no such dependency is an error rather than a label quietly resolved against
-the local document — controllers implementing a document routinely live in a different module
-from it, so where a controller is declared says nothing about which document it implements,
-and a wrong guess would report itself as a missing `@RawOperation` for operations nobody
-wrote.
+## Contributing
 
-The hazard this arrangement carries is that the generator names its types from nothing about
-the document: **every** spec module spells them `APIProtocol`, `Operations`, `Servers`,
-`Components`. In the app, which imports two of them, a bare `Operations.GetOrder.Input` is
-"ambiguous for type lookup" — including the spellings copied verbatim out of a controller
-that was perfectly unambiguous where it was written. The generated conformer is therefore
-emitted inside a per-spec namespace whose typealiases resolve it:
-
-```swift
-enum _WireOpenAPISpec_OrdersAPI {
-    typealias Operations = OrdersAPI.Operations
-    …
-    struct Conformer: APIProtocol { … }
-}
-```
-
-So a controller writes its own spec's types however it likes, qualified or not. An app may
-also generate one document itself and import another, because a module's own declarations
-win over identically-spelled imported ones.
-
-## Requires a forked swift-openapi-generator, for now
-
-Operations are dispatched by calling the generated per-operation method on a
-`UniversalServer` built for the request — the only place an operation's deserializer and
-serializer exist, so dispatching one operation rather than registering a whole document
-requires reaching it. Stock swift-openapi-generator makes that impossible, and the
-[fork](https://github.com/tachyonics/swift-openapi-generator/tree/swift-wire) carries two
-small changes:
-
-- the `UniversalServer` extension is no longer `fileprivate`, so other generated code in the
-  same module can call it;
-- its methods follow the configured `accessModifier:` rather than being internal regardless,
-  as `registerHandlers` in the same file already does — which is what a spec in its own
-  module needs, since its caller is in another module.
-
-Because those methods extend `UniversalServer`, which is `@_spi(Generated)`, they stay SPI
-however public they are declared; the emitted file imports a spec module the same way.
-
-The alternative is to keep one registration and reach the request's subject through a
-task-local, which works on a stock generator. It measured equal at p50 and worse in mean
-and p99, and it costs the whole collecting-transport machinery, so main does not carry it —
-see the `m6d-request-scope-strategies` branch.
+Building, testing and the documentation gate are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Status
 
