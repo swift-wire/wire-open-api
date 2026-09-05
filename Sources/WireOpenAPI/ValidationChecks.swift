@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 the swift-wire project authors
+
 import Foundation
 
 // The checks a generated validator calls, one per assertion the document can make about a scalar.

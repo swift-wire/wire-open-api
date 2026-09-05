@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 the swift-wire project authors
+
 import Foundation
 
 // Gates the diagnostics WireOpenAPIGen *rejects* with — the half the fixture cannot cover.
