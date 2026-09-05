@@ -1,5 +1,15 @@
 // swift-format-ignore-file
 //
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright (c) 2023 Apple Inc. and the SwiftOpenAPIGenerator project authors
+// Copyright (c) 2026 the wire-open-api project authors
+//
+// A transcription of `Sources/_OpenAPIGeneratorCore/Translator/Responses/HTTPStatusCodes.swift`
+// from the SwiftOpenAPIGenerator project (https://github.com/apple/swift-openapi-generator),
+// used under Apache License v2.0. Modified for use in this package.
+// See NOTICE for attribution.
+//
 // Excluded from swift-format and SwiftLint (see .swiftlint.yml), for the reason `GeneratorSafeNames` is:
 // this is a transcription, and its value is that a diff against upstream stays readable.
 //

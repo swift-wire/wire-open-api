@@ -1,5 +1,15 @@
 // swift-format-ignore-file
 //
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright (c) 2023 Apple Inc. and the SwiftOpenAPIGenerator project authors
+// Copyright (c) 2026 the wire-open-api project authors
+//
+// A transcription of `Sources/_OpenAPIGeneratorCore/Translator/TypeAssignment/SafeNameGenerator.swift`
+// from the SwiftOpenAPIGenerator project (https://github.com/apple/swift-openapi-generator),
+// used under Apache License v2.0. Modified for use in this package.
+// See NOTICE for attribution.
+//
 // Excluded from swift-format and SwiftLint (see .swiftlint.yml). This file is a transcription of
 // upstream's `SafeNameGenerator.swift`, and its whole value is that a future upstream diff is readable —
 // so it keeps upstream's formatting, its `_state` name, its 109-line state machine and its complexity of

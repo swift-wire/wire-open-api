@@ -1,4 +1,7 @@
 // swift-tools-version: 6.4
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 the wire-open-api project authors
+
 import PackageDescription
 
 // wire-open-api's runnable fixture — a `@WireMVCBootstrap` app that serves an OpenAPI operation and an

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 the wire-open-api project authors
+
 import Foundation
 
 // The checks a generated validator calls, one per assertion the document can make about a scalar.
