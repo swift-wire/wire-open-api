@@ -4,12 +4,12 @@
 > `ValidationChecks.swift`), the emitter (`WireOpenAPIGen/ValidationEmission.swift`) and its diagnostics
 > all exist in `wire-open-api` and are covered by tests — but nothing calls the emitter, so the document's
 > assertions are parsed and dropped and no generated code validates anything. Tracked as
-> [tachyonics/wire-open-api#49](https://github.com/tachyonics/wire-open-api/issues/49).
+> [swift-wire/wire-open-api#49](https://github.com/swift-wire/wire-open-api/issues/49).
 > **All five open questions were closed empirically** against the
 > pinned generator fork (see *Closed by building the fixture*), and one pre-existing bug found in the
 > process. Extends
 > [WireOpenAPIAdvanced.md](../Documentation/Notes/WireOpenAPIAdvanced.md) (M6d) and rests on the `@ErrorResponse` model in
-> [RouteErrorHandling.md](https://github.com/tachyonics/wire-mvc/blob/main/Documentation/Notes/RouteErrorHandling.md). Lands in `wire-open-api`.
+> [RouteErrorHandling.md](https://github.com/swift-wire/wire-mvc/blob/main/Documentation/Notes/RouteErrorHandling.md). Lands in `wire-open-api`.
 >
 > **Not to be confused with M6d.5, "spec-read validation."** That milestone validated *the author's
 > code against the document* at build time — an `@Path` on something the spec puts in query. This one

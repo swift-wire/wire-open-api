@@ -1,11 +1,11 @@
 # WireOpenAPI — design note (M3)
 
 > **Status:** the model for M3, the second framework adapter. It **re-homes
-> WireHummingbird's collation model** ([WireHummingbirdDesign.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/WireHummingbirdDesign.md))
+> WireHummingbird's collation model** ([WireHummingbirdDesign.md](https://github.com/swift-wire/swift-wire/blob/main/Documentation/Notes/WireHummingbirdDesign.md))
 > from `some RouterMethods<Context>` onto `some ServerTransport`, and in doing so
 > establishes the **cross-runtime collation surface** that WireMVC (M5) later folds
 > into. This note **supersedes the `@RoutedBy` / `_wireRegister` model** the roadmap
-> and [AdapterModel.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/AdapterModel.md) still carry — that was the post-construction
+> and [AdapterModel.md](https://github.com/swift-wire/swift-wire/blob/main/Documentation/Notes/AdapterModel.md) still carry — that was the post-construction
 > side-effect *sink* (`_wireRegister(instance:, transport:)` emitted after graph
 > build), retired in M2.3 when collation replaced it. M3 is collation, like M2.
 >
@@ -341,10 +341,10 @@ the key + conformance declaration), and its own macOS + Linux CI. Dependencies:
 
 ## References
 
-- [WireHummingbirdDesign.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/WireHummingbirdDesign.md) — the collation model this
+- [WireHummingbirdDesign.md](https://github.com/swift-wire/swift-wire/blob/main/Documentation/Notes/WireHummingbirdDesign.md) — the collation model this
   re-homes; *Native vs cross-runtime surfaces* (the ServerTransport line);
   *Adapter-collection consolidation* (the M5 fold-in this note answers).
-- [AdapterModel.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/AdapterModel.md) — the contribution-alias contract
+- [AdapterModel.md](https://github.com/swift-wire/swift-wire/blob/main/Documentation/Notes/AdapterModel.md) — the contribution-alias contract
   (`WireAdapterAnnotationV1`); its `@RoutedBy` / `_wireRegister` example is
   superseded by this note.
 - `wire-hummingbird` (external repo) — the shipped surface this mirrors

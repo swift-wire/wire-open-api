@@ -36,11 +36,11 @@
 > draft carried, and it is what M3's own *WireMVC seam* section asked for.
 >
 > Builds on [WireOpenAPIDesign.md](WireOpenAPIDesign.md) (M3's shipped adapter),
-> [WireMVCDesign.md](https://github.com/tachyonics/wire-mvc/blob/main/Documentation/Notes/WireMVCDesign.md) and [WireMVCMiddleware.md](https://github.com/tachyonics/wire-mvc/blob/main/Documentation/Notes/WireMVCMiddleware.md) (the routing
+> [WireMVCDesign.md](https://github.com/swift-wire/wire-mvc/blob/main/Documentation/Notes/WireMVCDesign.md) and [WireMVCMiddleware.md](https://github.com/swift-wire/wire-mvc/blob/main/Documentation/Notes/WireMVCMiddleware.md) (the routing
 > and middleware surface being unified onto), the M5.4 request-scope proxy
 > (Archive/M5_4_PLAN.md), and
-> [RouteErrorHandling.md](https://github.com/tachyonics/wire-mvc/blob/main/Documentation/Notes/RouteErrorHandling.md). Depends on the pluggable decomposition designed in
-> [DecompositionTransformers.md](https://github.com/tachyonics/wire-mvc/blob/main/Proposals/DecompositionTransformers.md), whose 1a/1b slice M6d owns.
+> [RouteErrorHandling.md](https://github.com/swift-wire/wire-mvc/blob/main/Documentation/Notes/RouteErrorHandling.md). Depends on the pluggable decomposition designed in
+> [DecompositionTransformers.md](https://github.com/swift-wire/wire-mvc/blob/main/Proposals/DecompositionTransformers.md), whose 1a/1b slice M6d owns.
 >
 > The spec remains the source of routing truth throughout; the generator remains the owner of
 > request/response binding. What moves is *where operations are registered*.
@@ -462,7 +462,7 @@ method whose parameters come from an internally-imported module does not compile
 ## The typed shim
 
 Parameter binding is a **decomposition keyed by input type**.
-[DecompositionTransformers.md](https://github.com/tachyonics/wire-mvc/blob/main/Proposals/DecompositionTransformers.md) already argues the general form:
+[DecompositionTransformers.md](https://github.com/swift-wire/wire-mvc/blob/main/Proposals/DecompositionTransformers.md) already argues the general form:
 transformers dispatch on *the input type the handler actually receives*. `Operations.X.Input` is a
 third input shape alongside the middleware box and the raw primitives. WireMVC's shipped
 `RequestBound.bind(name:request:pathParameters:body:)` is request-shaped and does **not** carry over —
@@ -1121,16 +1121,16 @@ module-qualified.
 ## References
 
 - [WireOpenAPIDesign.md](WireOpenAPIDesign.md) — M3's shipped adapter; the deferrals this note picks up.
-- [WireMVCDesign.md](https://github.com/tachyonics/wire-mvc/blob/main/Documentation/Notes/WireMVCDesign.md), [WireMVCMiddleware.md](https://github.com/tachyonics/wire-mvc/blob/main/Documentation/Notes/WireMVCMiddleware.md) — the routing and
+- [WireMVCDesign.md](https://github.com/swift-wire/wire-mvc/blob/main/Documentation/Notes/WireMVCDesign.md), [WireMVCMiddleware.md](https://github.com/swift-wire/wire-mvc/blob/main/Documentation/Notes/WireMVCMiddleware.md) — the routing and
   middleware surface being unified onto. `WireMVCDesign.md`'s *Added after M5.0* records `@Coding`,
   which this milestone caused but which belongs there.
-- [DecompositionTransformers.md](https://github.com/tachyonics/wire-mvc/blob/main/Proposals/DecompositionTransformers.md) — decomposition keyed by input type; the
+- [DecompositionTransformers.md](https://github.com/swift-wire/wire-mvc/blob/main/Proposals/DecompositionTransformers.md) — decomposition keyed by input type; the
   A-inject decision.
-- [RouteErrorHandling.md](https://github.com/tachyonics/wire-mvc/blob/main/Documentation/Notes/RouteErrorHandling.md) — the `@ErrorResponse` model.
+- [RouteErrorHandling.md](https://github.com/swift-wire/wire-mvc/blob/main/Documentation/Notes/RouteErrorHandling.md) — the `@ErrorResponse` model.
 - Archive/M5_4_PLAN.md — scope-entry thunk, teardown, per-root reachability.
 - Archive/WireMVCCodegen.md — Phase A, the plugin-owned orchestration
   WireOpenAPI becomes the second consumer of.
-- [AdapterModel.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/AdapterModel.md) — the capability contract.
+- [AdapterModel.md](https://github.com/swift-wire/swift-wire/blob/main/Documentation/Notes/AdapterModel.md) — the capability contract.
 - `Sources/WireGenCore/ContributorProxyEmission.swift` — the body hole and its field-name contract.
 - `spike-28` — the M6d.0 gate.
 

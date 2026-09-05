@@ -1,6 +1,6 @@
 # wire-open-api
 
-`WireOpenAPI` — a cross-runtime [swift-wire](https://github.com/tachyonics/swift-wire)
+`WireOpenAPI` — a cross-runtime [swift-wire](https://github.com/swift-wire/swift-wire)
 adapter for [swift-openapi-generator](https://github.com/apple/swift-openapi-generator).
 
 It collates `@OpenAPIController` controllers (types conforming to the generated
@@ -56,7 +56,7 @@ struct TaskController: APIProtocol {
 
 Requires a Swift 6.4 toolchain, and targets macOS 26 and Linux. The generator build it is
 compiled against is tracked in
-[#50](https://github.com/tachyonics/wire-open-api/issues/50).
+[#50](https://github.com/swift-wire/wire-open-api/issues/50).
 
 ## Documentation
 
@@ -82,8 +82,8 @@ Building, testing and the documentation gate are in [CONTRIBUTING.md](CONTRIBUTI
 ## Status
 
 Built. The adapter carries three layers, all shipped. Known gaps and deferrals are tracked as
-[issues](https://github.com/tachyonics/wire-open-api/issues), which are the source of truth for status —
-notably [#49](https://github.com/tachyonics/wire-open-api/issues/49): schema validation is written and
+[issues](https://github.com/swift-wire/wire-open-api/issues), which are the source of truth for status —
+notably [#49](https://github.com/swift-wire/wire-open-api/issues/49): schema validation is written and
 tested but no codegen reaches it.
 
 
