@@ -3,8 +3,8 @@ public import HTTPTypes
 @_spi(Generated) public import OpenAPIRuntime
 
 // The runtime half of schema validation: the two errors a generated validator throws, and the
-// accumulator it collects failures into. No codegen reads this file yet — it is deliberately usable, and
-// testable, on its own.
+// accumulator it collects failures into. `WireOpenAPIGen` emits calls to these from each operation's
+// forwarder; the types stay usable, and testable, on their own.
 //
 // See swift-wire's Notes/WireOpenAPIValidation.md. Two things from it are load-bearing here.
 //
