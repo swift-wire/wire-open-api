@@ -90,6 +90,9 @@ let package = Package(
         // library, rather than by a dictionary walk that silently drops what it does not recognise.
         .package(url: "https://github.com/mattpolzin/OpenAPIKit", from: "6.1.0"),
         .package(url: "https://github.com/jpsim/Yams.git", "4.0.0"..<"7.0.0"),
+        // Documentation only — `swift package generate-documentation` builds the `WireOpenAPI.docc`
+        // catalog. A plugin dependency, so it contributes nothing to a consumer's build graph.
+        .package(url: "https://github.com/swiftlang/swift-docc-plugin", from: "1.4.0"),
         // An `@Operation` is collated as a WireMVC route — it contributes to
         // `WireMVCKeys.routeContributors` like a `@Get` does — so wire-mvc is a core dependency. It is
         // proposal-native (tools 6.4, macOS 26), which is why this package is too.
