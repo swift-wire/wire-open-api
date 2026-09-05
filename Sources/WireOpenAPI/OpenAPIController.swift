@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright (c) 2026 the wire-open-api project authors
+// Copyright (c) 2026 the swift-wire project authors
 
 public import Wire
 // Plain: `WireMVCKeys` is named in the alias's *value*, not in the type of anything public here.
