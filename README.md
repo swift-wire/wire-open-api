@@ -97,3 +97,12 @@ tested but no codegen reaches it.
   came from an OpenAPI document or from an annotation. There is one routing model, not two.
 
 Depends on pushed swift-wire `main`; validated on macOS and Linux (see CI).
+
+## Licence
+
+Apache-2.0. See [LICENSE](LICENSE).
+
+**Generated output is yours.** Code that this package generates into your build — whatever its build
+plugin writes, and the expansion of its macros — is not a derivative work of this package and carries
+no licence obligation to it. Use it as you would code you wrote yourself. Nothing this package emits
+carries a licence header for that reason.
