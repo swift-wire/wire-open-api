@@ -264,7 +264,7 @@
     {
       "identity" : "swift-wire",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/tachyonics/swift-wire.git",
+      "location" : "https://github.com/swift-wire/swift-wire.git",
       "state" : {
         "branch" : "main",
         "revision" : "ebb3a2ec5a23a2abb72763c089c4eafd9013200a"
@@ -273,7 +273,7 @@
     {
       "identity" : "wire-mvc",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/tachyonics/wire-mvc.git",
+      "location" : "https://github.com/swift-wire/wire-mvc.git",
       "state" : {
         "branch" : "main",
         "revision" : "62f869ca0fc99082d8ae8473a9f3f3e9c78d87da"

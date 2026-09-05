@@ -45,11 +45,11 @@ let package = Package(
         // Traits union across the graph: wire-open-api already asks for `ServerTransport`; the fixture
         // adds `NIOHTTPServer`, which is the only thing pulling `swift-http-server` in.
         .package(
-            url: "https://github.com/tachyonics/wire-mvc.git",
+            url: "https://github.com/swift-wire/wire-mvc.git",
             branch: "main",
             traits: [.defaults, "ServerTransport", "NIOHTTPServer"]
         ),
-        .package(url: "https://github.com/tachyonics/swift-wire.git", branch: "main"),
+        .package(url: "https://github.com/swift-wire/swift-wire.git", branch: "main"),
         // Fork, until the access change lands upstream: direct dispatch (`--request-scope=direct`) calls
         // the generated per-operation methods on `UniversalServer`, which stock swift-openapi-generator
         // emits `fileprivate`. The branch changes that one `accessModifier` to internal — enough, because

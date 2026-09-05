@@ -4,7 +4,7 @@ The vocabulary for validating a request or response against the document — and
 of it.
 
 > Note: These types are usable directly. Whether codegen applies them per operation is tracked in
-> [#49](https://github.com/tachyonics/wire-open-api/issues/49).
+> [#49](https://github.com/swift-wire/wire-open-api/issues/49).
 
 ## The two failures
 

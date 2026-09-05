@@ -4,7 +4,7 @@ Serve an OpenAPI document's operations as ordinary WireMVC routes, wired at buil
 
 ## Overview
 
-WireOpenAPI is a [swift-wire](https://github.com/tachyonics/swift-wire) adapter for
+WireOpenAPI is a [swift-wire](https://github.com/swift-wire/swift-wire) adapter for
 swift-openapi-generator. A controller conforming to a generated `APIProtocol` is marked
 `@OpenAPIController`, and the build plugin collates every controller sharing a document onto one
 generated proxy contributed to **`WireMVCKeys.routeContributors`** — the same key `@Controller`

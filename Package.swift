@@ -79,7 +79,7 @@ let package = Package(
         .plugin(name: "WireOpenAPIGenPlugin", targets: ["WireOpenAPIGenPlugin"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/tachyonics/swift-wire.git", branch: "main"),
+        .package(url: "https://github.com/swift-wire/swift-wire.git", branch: "main"),
         .package(url: "https://github.com/apple/swift-openapi-runtime.git", from: "1.7.0"),
         .package(url: "https://github.com/apple/swift-http-types.git", from: "1.0.0"),
         // The 6.4 line, matching wire-mvc: SPM version ranges don't resolve pre-release tags, and the
@@ -102,7 +102,7 @@ let package = Package(
         // `ServerTransport` trait: serving the collated routes on Hummingbird/Vapor/Lambda goes through
         // `WireMVCServerTransport`, which the trait gates.
         .package(
-            url: "https://github.com/tachyonics/wire-mvc.git",
+            url: "https://github.com/swift-wire/wire-mvc.git",
             branch: "main",
             traits: [.defaults, "ServerTransport"]
         ),

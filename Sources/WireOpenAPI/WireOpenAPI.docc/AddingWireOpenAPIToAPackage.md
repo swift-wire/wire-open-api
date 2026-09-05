@@ -14,8 +14,8 @@ unactivated and the routes uncollated.
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/tachyonics/wire-open-api.git", branch: "main"),
-    .package(url: "https://github.com/tachyonics/wire-mvc.git", branch: "main"),
+    .package(url: "https://github.com/swift-wire/wire-open-api.git", branch: "main"),
+    .package(url: "https://github.com/swift-wire/wire-mvc.git", branch: "main"),
 ],
 targets: [
     .executableTarget(
@@ -53,4 +53,4 @@ document and its controllers live.
 ## Requirements
 
 A Swift 6.4 toolchain, macOS 26 or Linux, and the generator build named in
-[#50](https://github.com/tachyonics/wire-open-api/issues/50).
+[#50](https://github.com/swift-wire/wire-open-api/issues/50).
