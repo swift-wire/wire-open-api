@@ -54,9 +54,9 @@ struct TaskController: APIProtocol {
 }
 ```
 
-Requires a Swift 6.4 toolchain, targets macOS 26 and Linux, and — for now — a
-[forked swift-openapi-generator](https://github.com/tachyonics/swift-openapi-generator/tree/swift-wire).
-That constraint is worth reading before adopting: see *The forked generator* in the documentation.
+Requires a Swift 6.4 toolchain, and targets macOS 26 and Linux. The generator build it is
+compiled against is tracked in
+[#50](https://github.com/tachyonics/wire-open-api/issues/50).
 
 ## Documentation
 
@@ -69,7 +69,7 @@ The user-facing documentation is a DocC catalog — build it with
 - **Documents** — several controllers sharing one spec, and several specs in one app.
 - **Serving** — the one call that serves them, and where a request-scoped controller's errors are
   mapped.
-- **Constraints** — the forked generator, and the state of schema validation.
+- **Constraints** — the state of schema validation.
 
 Design notes recording *why* each decision was made are in
 [`Documentation/Notes`](Documentation/Notes); proposals not yet built are in

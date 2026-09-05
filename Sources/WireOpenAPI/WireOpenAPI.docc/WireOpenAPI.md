@@ -34,10 +34,6 @@ else — services and lifecycle stay with the runtime's own adapter, and the two
 graph. Serving is `WireMVCServerTransport.apply(graph, to: transport)`, the call a WireMVC app
 already makes; there is deliberately no WireOpenAPI-specific facade. See <doc:ServingTheRoutes>.
 
-**Not usable with a stock generator yet.** Dispatching one operation rather than registering a
-whole document needs two small changes that a fork carries today. That constraint is real and is
-set out in <doc:TheForkedGenerator> rather than buried.
-
 ## Topics
 
 ### Getting started
@@ -56,13 +52,9 @@ set out in <doc:TheForkedGenerator> rather than buried.
 - <doc:ServingTheRoutes>
 - <doc:ScopeAndErrors>
 
-### Constraints
+### Validation
 
-- <doc:TheForkedGenerator>
 - <doc:SchemaValidation>
-
-### Validation vocabulary
-
 - ``WireOpenAPIFailure``
 - ``WireOpenAPIFailureLocation``
 - ``WireOpenAPIFailureAccumulator``

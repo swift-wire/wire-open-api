@@ -48,4 +48,4 @@ for an error thrown at scope entry is dead code, and the controller-scope one is
 
 A request the document describes as invalid is a different case: it is thrown inside the
 forwarder, where the operation's typed input exists, so it maps like any other error the handler
-could throw. See <doc:SchemaValidation> for what ships and what does not.
+could throw. See <doc:SchemaValidation>.

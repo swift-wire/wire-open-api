@@ -50,10 +50,7 @@ operation types are referenced across the module boundary. It also needs a depen
 WireGen runs once, in the app, so that is where the proxy is emitted regardless of where the
 document and its controllers live.
 
-## Before you start
+## Requirements
 
-WireOpenAPI needs a forked swift-openapi-generator today — read <doc:TheForkedGenerator> before
-committing to it, because the constraint is not one you can work around at the call site.
-
-It requires a Swift 6.4 toolchain and targets macOS 26 and Linux, matching wire-mvc, which is
-proposal-native.
+A Swift 6.4 toolchain, macOS 26 or Linux, and the generator build named in
+[#50](https://github.com/tachyonics/wire-open-api/issues/50).

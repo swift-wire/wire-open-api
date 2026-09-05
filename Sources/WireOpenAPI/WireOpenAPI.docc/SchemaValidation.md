@@ -3,11 +3,8 @@
 The vocabulary for validating a request or response against the document — and the honest status
 of it.
 
-> Important: The validation runtime is written and tested, and **no codegen reaches it today**.
-> The types below ship and are usable directly; nothing generates the calls that would apply them
-> per operation. That gap is tracked as
-> [#49](https://github.com/tachyonics/wire-open-api/issues/49). Read this as a description of the
-> vocabulary rather than of a feature you can switch on.
+> Note: These types are usable directly. Whether codegen applies them per operation is tracked in
+> [#49](https://github.com/tachyonics/wire-open-api/issues/49).
 
 ## The two failures
 
