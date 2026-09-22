@@ -82,9 +82,9 @@ let package = Package(
         .package(url: "https://github.com/swift-wire/swift-wire.git", branch: "main"),
         .package(url: "https://github.com/apple/swift-openapi-runtime.git", from: "1.7.0"),
         .package(url: "https://github.com/apple/swift-http-types.git", from: "1.0.0"),
-        // The 6.4 line, matching wire-mvc: SPM version ranges don't resolve pre-release tags, and the
-        // branch pin also overrides swift-wire's transitive 603 requirement.
-        .package(url: "https://github.com/swiftlang/swift-syntax", branch: "release/6.4.x"),
+        // The 604 line, released with Swift 6.4 and matching wire-mvc; swift-wire admits it too
+        // (603..<605), so SPM resolves one swift-syntax for the whole graph.
+        .package(url: "https://github.com/swiftlang/swift-syntax", "604.0.0"..<"605.0.0"),
         // Reads the document's `servers:` block — the only part of the spec the codegen needs today.
         // The same parser swift-openapi-generator uses, and JSON is valid YAML, so `openapi.json` works.
         // Pinned to the range swift-openapi-generator uses, so a consumer resolving both does not end up

@@ -1,3 +1,21 @@
+<p align="center">
+  <a href="https://github.com/swift-wire/wire-open-api/actions/workflows/build.yml">
+    <img src="https://github.com/swift-wire/wire-open-api/actions/workflows/build.yml/badge.svg" alt="Build">
+  </a>
+  <a href="https://swiftpackageindex.com/swift-wire/wire-open-api">
+    <img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fswift-wire%2Fwire-open-api%2Fbadge%3Ftype%3Dswift-versions" alt="Swift versions">
+  </a>
+  <a href="https://codecov.io/gh/swift-wire/wire-open-api">
+    <img src="https://codecov.io/gh/swift-wire/wire-open-api/graph/badge.svg" alt="Code coverage">
+  </a>
+  <a href="https://swiftpackageindex.com/swift-wire/wire-open-api">
+    <img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fswift-wire%2Fwire-open-api%2Fbadge%3Ftype%3Dplatforms" alt="Platforms">
+  </a>
+  <a href="https://www.apache.org/licenses/LICENSE-2.0">
+    <img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0">
+  </a>
+</p>
+
 # wire-open-api
 
 `WireOpenAPI` — a cross-runtime [swift-wire](https://github.com/swift-wire/swift-wire)

@@ -1,5 +1,5 @@
 {
-  "originHash" : "2016880193ec62c24e7c2ab502c9bf391d40b64b0bd8365c3bd10b7eb2a818c7",
+  "originHash" : "9ef75df590148538d7fdba5242176116a8fb7341777e42a7d77de01137f357cd",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -248,8 +248,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/swiftlang/swift-syntax",
       "state" : {
-        "branch" : "release/6.4.x",
-        "revision" : "050f1a346fbbac0ca2cfb15a95274f7bd1cf0ccf"
+        "revision" : "050f1a346fbbac0ca2cfb15a95274f7bd1cf0ccf",
+        "version" : "604.0.0"
       }
     },
     {
@@ -267,7 +267,7 @@
       "location" : "https://github.com/swift-wire/swift-wire.git",
       "state" : {
         "branch" : "main",
-        "revision" : "ebb3a2ec5a23a2abb72763c089c4eafd9013200a"
+        "revision" : "28f30f2b45215ae1488a5405beed8d80a182d37b"
       }
     },
     {
@@ -276,7 +276,7 @@
       "location" : "https://github.com/swift-wire/wire-mvc.git",
       "state" : {
         "branch" : "main",
-        "revision" : "62f869ca0fc99082d8ae8473a9f3f3e9c78d87da"
+        "revision" : "1227d3249002bab6c2fb1f00ceb247b75a68ac6f"
       }
     },
     {
