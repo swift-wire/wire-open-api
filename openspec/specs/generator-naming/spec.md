@@ -25,7 +25,7 @@ Rationale: [WireOpenAPIAdvanced](../../../Documentation/Notes/WireOpenAPIAdvance
 - **WHEN** `GeneratorNamingStrategy(rawValue: "idiomatic")` is evaluated
 - **THEN** it is `.idiomatic`
 
-Pinned by: `Tests/WireOpenAPINamingTests/GeneratorSafeNamesTests.swift` (`generatorDefaultIsDefensive`).
+Pinned by: `Tests/WireOpenAPINamingTests/GeneratorSafeNamesTests.swift` (`generatorDefaultIsDefensive`) for the default. The `idiomatic` raw value is pinned only indirectly by `.github/workflows/build.yml` (`Fixtures` job, step `Build`), which builds `Fixtures/Sources/OrdersAPI/openapi-generator-config.yaml` with `namingStrategy: idiomatic`; the `defensive` raw value is pinned by nothing yet.
 
 ### Requirement: The transcription reproduces the generator's names
 `GeneratorSafeNames.swiftTypeName(for:strategy:)` and `GeneratorSafeNames.swiftMemberName(for:strategy:)`
@@ -46,7 +46,10 @@ Pinned by: `Tests/WireOpenAPINamingTests/GeneratorSafeNamesTests.swift` (`theGol
 Under `.defensive`, the type and member names SHALL be the same string: the documented name with
 each character that is not a letter, digit or `_` replaced by `_<entity>_`, where `<entity>` is its
 HTML entity name from `specialCharsMap` or `x` followed by its upper-case hexadecimal scalar value;
-a leading digit prefixed with `_`; and a result that is one of `keywords` prefixed with `_`.
+a leading digit prefixed with `_`; and a result that is one of `keywords` prefixed with `_`. A letter
+is a member of Foundation's Unicode `CharacterSet.letters`, and after the first character a letter or
+digit is a member of `CharacterSet.alphanumerics`, so non-ASCII letters and digits are kept. An empty
+name SHALL be `_empty`, and a name that sanitises to exactly `_` SHALL be `_underscore_`.
 
 #### Scenario: a separator and a symbol
 - **WHEN** the documented names are `get-task` and `$filter`
@@ -60,13 +63,15 @@ a leading digit prefixed with `_`; and a result that is one of `keywords` prefix
 - **WHEN** the documented name is `Optional`
 - **THEN** the defensive name is `Optional`
 
-Pinned by: `Tests/WireOpenAPINamingTests/GeneratorSafeNamesTests.swift` (`reproducesTheGenerator`), `Tests/WireOpenAPINamingTests/naming-golden.tsv`.
+Pinned by: `Tests/WireOpenAPINamingTests/GeneratorSafeNamesTests.swift` (`reproducesTheGenerator`), `Tests/WireOpenAPINamingTests/naming-golden.tsv`. The `_empty` and `_underscore_` cases are pinned by nothing yet.
 
 ### Requirement: The idiomatic strategy camel-cases, then applies the defensive rules
-Under `.idiomatic`, the type name SHALL be upper camel case and the member name lower camel case,
-with words split at `_`, `-`, space, `/` and `+`, and an all-upper-case documented name lower-cased
-word by word. The camel-cased result SHALL then pass through the defensive transform, so keywords
-and leading digits are prefixed as there.
+Under `.idiomatic`, words SHALL be split at `_`, `-`, space, `/` and `+` and joined in camel case,
+upper for the type name and lower for the member name, with a documented name that has no lower-case
+letters lower-cased word by word. Leading underscores are kept, a `.` inside a word becomes `_`, `{`
+and `}` are dropped, and any other character is kept. The result SHALL then pass through the
+defensive transform, so keywords and leading digits are prefixed and kept characters escaped as
+there, which can leave a name that is not camel case.
 
 #### Scenario: separated and all-upper-case names
 - **WHEN** the documented names are `GET_TASK` and `user-id`
@@ -79,6 +84,10 @@ and leading digits are prefixed as there.
 #### Scenario: a keyword
 - **WHEN** the documented name is `class`
 - **THEN** the idiomatic type name is `Class` and the member name `_class`
+
+#### Scenario: a period and a symbol
+- **WHEN** the documented names are `get.task` and `$filter`
+- **THEN** the idiomatic type names are `Get_task` and `_dollar_filter`
 
 Pinned by: `Tests/WireOpenAPINamingTests/GeneratorSafeNamesTests.swift` (`reproducesTheGenerator`), `Tests/WireOpenAPINamingTests/naming-golden.tsv`.
 
@@ -128,15 +137,16 @@ status for which no case is found SHALL fail the tool with
 - **WHEN** the unit tests load `status-golden.tsv`
 - **THEN** it holds exactly 500 rows
 
-Pinned by: `Tests/WireOpenAPINamingTests/GeneratorSafeNamesTests.swift` (`statusTableLoaded`).
+Pinned by: `Tests/WireOpenAPINamingTests/GeneratorSafeNamesTests.swift` (`statusTableLoaded`) for the row count, and `.github/workflows/build.yml` (`Fixtures` job, step `Check the naming golden table against the real generator`) for the table's content coming from the generator.
 
 ### Requirement: `--check` fails when the generator no longer agrees with a table
 With `--check`, `NamingGoldenTool` SHALL regenerate both tables without writing them and compare
 each with the checked-in file. On any difference it SHALL write
 `The generator no longer agrees with <file>.` followed by
 `Sources/WireOpenAPINaming transcribes its <label>; it has diverged.` and a `was:`/`now:` pair for
-each differing row, where `<label>` is `safe-name transform` or `status-code table`, and exit 1. When
-both match it SHALL print `golden tables match the generator (<N> names, 500 statuses).` and exit 0.
+each regenerated row that differs from, or is missing from, the checked-in file (a checked-in row
+beyond the regenerated rows gets no pair, though the tool still fails), where `<label>` is `safe-name transform` or `status-code table`, and exit 1. A checked-in
+file it cannot read SHALL be reported as `cannot read <path>` and exit 1. When both match it SHALL print `golden tables match the generator (<N> names, 500 statuses).` and exit 0.
 
 #### Scenario: CI against the fixture's generator checkout
 - **WHEN** the `Fixtures` job runs `swift run NamingGoldenTool --check` with `OPENAPI_GENERATOR_PATH` set to `Fixtures/.build/checkouts/swift-openapi-generator`
@@ -161,15 +171,24 @@ Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Check the naming
 ### Requirement: The transcribed files carry the upstream attribution
 `Sources/WireOpenAPINaming/GeneratorSafeNames.swift` and `Sources/WireOpenAPINaming/GeneratorStatusNames.swift`
 SHALL carry the SwiftOpenAPIGenerator copyright line above this project's own and name the upstream
-file each transcribes, and `NOTICE` SHALL list both files with those upstream sources. Both files
-SHALL be excluded from SwiftLint in `.swiftlint.yml` and from swift-format by
-`// swift-format-ignore-file`.
+file each transcribes, and `NOTICE` SHALL list both files with those upstream sources.
 
 #### Scenario: the licence-header check
 - **WHEN** the `LicenceHeaders` job runs `Scripts/check-license-headers.sh`
 - **THEN** both files pass with the SPDX identifier within their first five lines and this project's copyright line within their first twelve
 
 Pinned by: `.github/workflows/build.yml` (`LicenceHeaders` job, the SPDX and project copyright lines). The upstream attribution and `NOTICE` entries are pinned by nothing yet.
+
+### Requirement: The transcribed files are exempt from SwiftLint and swift-format
+`Sources/WireOpenAPINaming/GeneratorSafeNames.swift` and `Sources/WireOpenAPINaming/GeneratorStatusNames.swift`
+SHALL be listed under `excluded:` in `.swiftlint.yml` and SHALL begin with `// swift-format-ignore-file`,
+so neither tool rewrites or reports on their upstream formatting.
+
+#### Scenario: the lint and format jobs
+- **WHEN** the `SwiftLint` job runs `swiftlint lint --quiet` and the `SwiftFormat` job runs `swift-format format --recursive --in-place .` followed by `git diff --exit-code`
+- **THEN** neither job reports or changes either transcribed file
+
+Pinned by: `.github/workflows/build.yml` (`SwiftLint`, `SwiftFormat`), `.swiftlint.yml`.
 
 ## Related specifications
 
