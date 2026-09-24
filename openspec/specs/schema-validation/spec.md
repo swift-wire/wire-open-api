@@ -30,12 +30,13 @@ asserts anything, WireOpenAPIGen SHALL emit no `Validation` enum and no validati
 - **WHEN** no parameter, request body or checked response schema of any operation carries `minLength`, `maxLength`, `pattern`, a numeric bound, `multipleOf`, `minItems`, `maxItems` or `uniqueItems`
 - **THEN** the generated file declares no `enum Validation` and no forwarder contains a `try Validation.` line
 
-Pinned by: `.github/workflows/build.yml` (job "Fixtures — serve and probe", step "Serve an OpenAPI operation and a @Get route from one router", probe `assertNested`).
+Pinned by: `.github/workflows/build.yml` (job "Fixtures — serve and probe", step "Serve an OpenAPI operation and a @Get route from one router", probe `assertNested`) for the recursive scenario. The unconstrained scenario is pinned by nothing yet.
 
 ### Requirement: The operation validator runs first in the forwarder
-The forwarder of an operation whose request carries a check SHALL begin with `try
-Validation.<operationId>(input)`, before the request body is unwrapped, before any graph-aware
-binding is resolved and before the handler is called, and inside the `do` that carries the
+The forwarder of an operation whose request carries a check SHALL call `try
+Validation.<operationId>(input)` as its first statement, after only the binding of a request-scoped
+controller's subject, before the request body is unwrapped, before any graph-aware binding is
+resolved and before the handler is called, and inside the `do` that carries the
 operation's `@ErrorResponse` clauses when it has any. It SHALL be emitted for `@RawOperation` and
 `@Operation` alike.
 
@@ -43,7 +44,7 @@ operation's `@ErrorResponse` clauses when it has any. It SHALL be emitted for `@
 - **WHEN** `getTask` is a `@RawOperation` whose `id` path parameter declares `pattern: '^[a-z0-9-]+$'` and maps `WireOpenAPIRequestValidationError` to its documented 422
 - **THEN** `GET /api/v1/tasks/NOT-LOWERCASE` answers `422` with the body `{"message":"invalid: path.id"}` and the handler is not called
 
-Pinned by: `.github/workflows/build.yml` (job "Fixtures — serve and probe", probe `assertMapped`).
+Pinned by: `.github/workflows/build.yml` (job "Fixtures — serve and probe", probe `assertMapped`) for the `422` answer and its body. The ordering, and that the handler is not called, are pinned by nothing yet.
 
 ### Requirement: String assertions count code points and match patterns unanchored
 `WireOpenAPIValidate.string` SHALL measure `minLength` and `maxLength` against
@@ -62,8 +63,8 @@ keyword, the bound or pattern source as `expected`, and the measured length or t
 Pinned by: `Tests/WireOpenAPITests/ValidationChecksTests.swift` (`lengthCountsScalars`, `patternIsAFind`, `severalAtOnce`).
 
 ### Requirement: Integer bounds are exact and number bounds tolerate binary rounding
-`WireOpenAPIValidate.integer` SHALL accept any `BinaryInteger` width and compare `minimum`,
-`maximum` and `multipleOf` exactly in `Int64`. `WireOpenAPIValidate.number` SHALL accept any
+`WireOpenAPIValidate.integer` SHALL compare `minimum`, `maximum` and `multipleOf` exactly in
+`Int64` for every integer width the generator emits (`Int`, `Int32`, `Int64`). `WireOpenAPIValidate.number` SHALL accept any
 `BinaryFloatingPoint` width, compare in `Double`, and treat a `multipleOf` remainder within
 `abs(multipleOf) * 1e-9` of zero or of the divisor as divisible. An exclusive bound SHALL reject the
 bound itself and SHALL record `exclusiveMinimum` or `exclusiveMaximum` as its keyword.
@@ -88,7 +89,7 @@ the array's count.
 - **WHEN** `["ok", "x", "fine"]` at `query.tags` is checked with an element closure asserting `minLength: 2`
 - **THEN** the one failure's path is `query.tags[1]`
 
-Pinned by: `Tests/WireOpenAPITests/ValidationChecksTests.swift` (`uniqueItems`, `elementPathsAreIndexed`).
+Pinned by: `Tests/WireOpenAPITests/ValidationChecksTests.swift` (`uniqueItems`, `elementPathsAreIndexed`). `minItems`, `maxItems` and stopping once the accumulator is full are pinned by nothing yet.
 
 ### Requirement: A nil value is never a failure
 Every `WireOpenAPIValidate` check SHALL return without recording when the value is nil, leaving
@@ -98,7 +99,7 @@ absence to the generator's `required` handling.
 - **WHEN** `WireOpenAPIValidate.string(nil, …, minLength: 3, …)` is called
 - **THEN** the accumulator stays empty
 
-Pinned by: `Tests/WireOpenAPITests/ValidationChecksTests.swift` (`nilPasses`).
+Pinned by: `Tests/WireOpenAPITests/ValidationChecksTests.swift` (`nilPasses`) for `string`, `integer` and `array`. A nil `number` is pinned by nothing yet.
 
 ### Requirement: Objects, `allOf` and `$ref` are walked by emitted code
 The emitted checks SHALL descend into an inline object's properties with the path
@@ -111,7 +112,7 @@ one self-calling function.
 - **WHEN** `POST /api/v1/tasks/new?title=t` carries `{"id":"x","title":"ok","subtasks":[{"id":"y","title":"fine"},{"id":"z","title":""}]}`
 - **THEN** the answer is `422` with the body `{"message":"rejected: body.subtasks[1].title"}`
 
-Pinned by: `.github/workflows/build.yml` (job "Fixtures — serve and probe", probe `assertNested`).
+Pinned by: `.github/workflows/build.yml` (job "Fixtures — serve and probe", probe `assertNested`) for the `$ref` clause. The inline-object and `allOf` clauses are pinned by nothing yet.
 
 ### Requirement: Keywords the generator already enforces emit nothing
 A schema carrying `enum` SHALL produce no check, and WireOpenAPIGen SHALL emit no check for
@@ -126,8 +127,9 @@ Pinned by: nothing yet.
 ### Requirement: An assertion the adapter cannot check fails the build
 WireOpenAPIGen SHALL fail with an error naming the JSON path, the side, the operation and the
 keywords when a request-reachable schema declares `minProperties` above its `required` count,
-`maxProperties`, `minLength`/`maxLength`/`pattern` on a `format: date-time` string, or any assertion
-beneath a `oneOf`/`anyOf` member. The message SHALL be `'<path>' in <side> '<operationId>' declares
+`maxProperties`, `minLength`/`maxLength`/`pattern` on a `format: date-time` string, or any assertion or any `$ref`
+beneath a `oneOf`/`anyOf` member. A `$ref` counts whether or not the schema it names asserts
+anything, which is tracked as a defect in https://github.com/swift-wire/wire-open-api/issues/90. The message SHALL be `'<path>' in <side> '<operationId>' declares
 <keywords>, which this adapter cannot check because <reason>. Remove it from the document, or check it
 in the handler. @RawOperation is not an escape — validation is emitted for those too, from the same
 document.`
@@ -144,7 +146,11 @@ document.`
 - **WHEN** `opA`'s body is a `oneOf` whose first member asserts something
 - **THEN** WireOpenAPIGen reports `'body' in the request of 'opA' declares assertions beneath member 1, which this adapter cannot check because the generator emits a oneOf/anyOf as an enum whose case names this adapter does not derive. …`
 
-Pinned by: `Sources/DiagnosticGoldenTool/diagnostics-golden.txt` (`parameters/assertion-on-a-type-the-format-changed`, `schemas/property-count-bounds`, `schemas/assertion-beneath-a-oneOf`), `.github/workflows/build.yml` (step "Check the diagnostics WireOpenAPIGen rejects with").
+#### Scenario: a `oneOf` of references to unconstrained schemas
+- **WHEN** `opA`'s body is `oneOf: [{ $ref: '#/components/schemas/A' }, { $ref: '#/components/schemas/B' }]` and neither `A` nor `B` asserts anything
+- **THEN** WireOpenAPIGen reports `'body' in the request of 'opA' declares assertions beneath member 1, assertions beneath member 2, which this adapter cannot check because the generator emits a oneOf/anyOf as an enum whose case names this adapter does not derive. …`
+
+Pinned by: `Sources/DiagnosticGoldenTool/diagnostics-golden.txt` (`parameters/assertion-on-a-type-the-format-changed`, `schemas/property-count-bounds`, `schemas/assertion-beneath-a-oneOf`), `.github/workflows/build.yml` (step "Check the diagnostics WireOpenAPIGen rejects with"). The `$ref`-member scenario is pinned by nothing yet.
 
 ### Requirement: A pattern Swift cannot compile fails the build
 WireOpenAPIGen SHALL compile every reachable `pattern` with Swift's `Regex` and SHALL fail with
@@ -160,15 +166,19 @@ Pinned by: `Sources/DiagnosticGoldenTool/diagnostics-golden.txt` (`parameters/pa
 
 ### Requirement: Failures are collected up to a cap of 100
 `WireOpenAPIFailureAccumulator` SHALL record every failure up to its limit, which defaults to
-`WireOpenAPIFailureAccumulator.defaultLimit` (100), SHALL set `truncated` when a failure arrives after
-the limit is reached, and SHALL yield no error when nothing was recorded. The generated walk SHALL
-stop descending once `isFull` is true.
+`WireOpenAPIFailureAccumulator.defaultLimit` (100), SHALL set `truncated` when `record` is called
+after the limit is reached, and SHALL yield no error when nothing was recorded. The generated walk
+SHALL stop descending once `isFull` is true: every `WireOpenAPIValidate` check, the array element walk
+and every emitted `schema_<Name>` function return before recording, so in generated validation
+`truncated` is set only when one check call records across the limit, and a request that stops at the
+cap otherwise reports `truncated` as false. That is tracked as a defect in
+https://github.com/swift-wire/wire-open-api/issues/92.
 
 #### Scenario: ten failures against a limit of three
 - **WHEN** ten failures are recorded into an accumulator built with `limit: 3`
 - **THEN** it holds three, `truncated` and `isFull` are true, and `requestError(operationID:)?.truncated` is true
 
-Pinned by: `Tests/WireOpenAPITests/SchemaValidationTests.swift` (`capIsEnforcedAndReported`, `underCapIsNotTruncated`, `emptyIsNotAnError`).
+Pinned by: `Tests/WireOpenAPITests/SchemaValidationTests.swift` (`capIsEnforcedAndReported`, `underCapIsNotTruncated`, `emptyIsNotAnError`). The generated walk stopping at the cap is pinned by nothing yet.
 
 ### Requirement: The request error answers 400 for a parameter failure and 422 otherwise
 `WireOpenAPIRequestValidationError.httpStatus` SHALL be `.badRequest` when any failure's location is
@@ -204,9 +214,11 @@ Pinned by: `Tests/WireOpenAPITests/SchemaValidationTests.swift` (`unmappedBodyCa
 one `.body` failure: `keyNotFound` as keyword `required` at the missing key's path, `valueNotFound` as
 `required` with `actual` `null`, `typeMismatch` as `type` naming the expected type, and
 `dataCorrupted` as `invalid` carrying the decoder's debug description. Paths SHALL be rendered from
-`body` with indices in brackets. Any other error SHALL yield nil. The terminal SHALL apply this
-conversion to a handler failure, unwrapping `ServerError.underlyingError`, so one mapping of
-`WireOpenAPIRequestValidationError` answers both a decode rejection and a generated check.
+`body` with indices in brackets. Any other error SHALL yield nil. The terminal SHALL first offer a handler failure to the
+operation's terminal-arriving `@ErrorResponse` mappings as it arrived, and SHALL apply this
+conversion, unwrapping `ServerError.underlyingError`, only when none of them matched. So one mapping
+of `WireOpenAPIRequestValidationError` answers both a decode rejection and a generated check when no
+`DecodingError` or catch-all mapping applies to the operation.
 
 #### Scenario: a missing required property inside an array
 - **WHEN** a `keyNotFound` for `title` arrives with coding path `subtasks`, `1`
@@ -216,7 +228,7 @@ conversion to a handler failure, unwrapping `ServerError.underlyingError`, so on
 - **WHEN** `createTask` receives `{"id":"x"}`, which the deserializer refuses, and separately `{"id":"x","title":""}`, which the generated check refuses
 - **THEN** both answers are identical: `422` from the operation's one `@ErrorResponse(WireOpenAPIRequestValidationError.self, .unprocessableContent, …)`
 
-Pinned by: `Tests/WireOpenAPITests/SchemaValidationTests.swift` (`keyNotFound`, `typeMismatch`, `dataCorrupted`, `indexedPath`, `othersAreNotConverted`), `.github/workflows/build.yml` (probes `assertBody`, `assertDecodeSeam`).
+Pinned by: `Tests/WireOpenAPITests/SchemaValidationTests.swift` (`keyNotFound`, `typeMismatch`, `dataCorrupted`, `indexedPath`, `othersAreNotConverted`), `.github/workflows/build.yml` (probes `assertBody`, `assertDecodeSeam`). The `valueNotFound` conversion is pinned by nothing yet.
 
 ### Requirement: Response validation is opt-in per document
 WireOpenAPIGen SHALL check handler output only when the `wire-openapi.yaml` beside the document sets
@@ -238,19 +250,24 @@ Pinned by: `Sources/DiagnosticGoldenTool/diagnostics-golden.txt` (`responses/unr
 A response check SHALL throw `WireOpenAPIResponseValidationError`, whose `httpStatus` is
 `.internalServerError` and whose `httpBody` is nil. With response validation on, the forwarder's
 `do` SHALL rethrow it ahead of every `@ErrorResponse` clause, so no author mapping, catch-all
-included, matches it there.
+included, matches it there. A catch-all (`Error` or `Swift.Error`) mapping on the operation or its
+controller is also emitted into the terminal's `rejectionResponse` closure, which matches the
+rethrown error there, so such an operation answers with the catch-all's status instead of 500; that
+is tracked as a defect in https://github.com/swift-wire/wire-open-api/issues/91.
 
 #### Scenario: a raw operation returning an over-long field
 - **WHEN** the OrdersAPI document sets `validatesResponses: true`, bounds `Order.item` with `maxLength: 60`, and `getOrder` returns an 80-character `item` for `GET /api/v2/orders/toolong`
 - **THEN** the answer is `500` with a zero-length body
 
-Pinned by: `Tests/WireOpenAPITests/SchemaValidationTests.swift` (`responseIs500`), `.github/workflows/build.yml` (probe `badResponse`).
+Pinned by: `Tests/WireOpenAPITests/SchemaValidationTests.swift` (`responseIs500`), `.github/workflows/build.yml` (probe `badResponse`). The catch-all behaviour at the terminal is pinned by nothing yet.
 
 ### Requirement: Response checks cover every way a response is built
 With response validation on, WireOpenAPIGen SHALL check the value a typed `@Operation` returns before
 wrapping it, SHALL check each JSON body of a documented response a `@RawOperation`'s `Output` carries,
 matched with `if case .<status>(let wireOpenAPIPayload) = wireOpenAPIOutput`, and SHALL check the body
-a three-argument `@ErrorResponse` closure builds before returning it.
+a three-argument `@ErrorResponse` closure builds inside the forwarder before returning it. A body the
+terminal's `rejectionResponse` closure builds, for a `DecodingError`, catch-all or
+`WireOpenAPIRequestValidationError` mapping, SHALL be sent without a response check.
 
 #### Scenario: a raw operation's output
 - **WHEN** `getOrder` is a `@RawOperation` and its document checks responses
