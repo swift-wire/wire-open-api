@@ -27,13 +27,14 @@ each preceded by its conformer namespace.
 - **WHEN** the fixture app holds the `OrdersAPI` group and the `WireOpenAPIBootstrapExample` group
 - **THEN** `_WireOpenAPIHandlers.swift` declares `enum _WireOpenAPISpec_OrdersAPI` and `extension _WireOpenAPIContributor_OrdersAPI: RouteContributor` before `enum _WireOpenAPISpec_WireOpenAPIBootstrapExample` and `extension _WireOpenAPIContributor_WireOpenAPIBootstrapExample: RouteContributor`, and both documents' operations serve
 
-Pinned by: `.github/workflows/build.yml` (`Fixtures` job, `Build` step, and the `openapi` and `order` assertions of step `Serve an OpenAPI operation and a @Get route from one router`).
+Pinned by: `.github/workflows/build.yml` (`Fixtures` job, `Build` step, and the `openapi` and `order` assertions of step `Serve an OpenAPI operation and a @Get route from one router`), which pin that both groups compile and serve. The ascending emission order is pinned by nothing yet.
 
 ### Requirement: The emitted file imports the runtime under its SPI
 The emitted file SHALL import the sorted, de-duplicated set of `Foundation`, `OpenAPIRuntime`,
 `WireMVC`, `WireOpenAPI`, every `--import` module, and `Wire` when some request-scoped controller is
-generic. `OpenAPIRuntime` and every module passed with `--spec-module` SHALL be imported as
-`@_spi(Generated) import`, and every other module as a plain `import`.
+generic. `OpenAPIRuntime`, and every imported module that was also passed with `--spec-module`, SHALL
+be imported as `@_spi(Generated) import`, and every other module as a plain `import`. `--spec-module`
+SHALL NOT by itself add an import; the plugins pass `--import` for each such module.
 
 #### Scenario: a dependency carrying a document
 - **WHEN** the plugin passes `--spec-module OrdersAPI …` and `--import OrdersAPI`
@@ -131,7 +132,7 @@ with `<key>` sanitised by `sanitizedKeyFragment`. A registration with no entries
 - **WHEN** `StatusController` carries the same `@Middleware(RequireAPIKeyKeys.factory)` on a `@Get`
 - **THEN** the log shows `apikey: GET /status/tasks` as well
 
-Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `middleware log` checks).
+Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `middleware log` checks), which pin that each scope's entries apply. The controller-before-method order is pinned by nothing yet: no fixture operation carries both scopes.
 
 ### Requirement: Controller-scope middleware stays with the controller that declared it
 The fold for an operation SHALL include controller-scope entries only from the controller that
@@ -159,7 +160,10 @@ Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI
 The route terminal SHALL call `WireOpenAPIRoutes.invoke(handler:request:pathParameters:reader:sender:rejectionResponse:operationID:)`
 with a `@Sendable` handler that calls `wireOpenAPIServer.<method>(request:body:metadata:)`, where
 `<method>` is the implementing controller method's own name, and with `operationID:` the operation's
-id. `invoke` SHALL collect the request body, pass it as `nil` when empty, and send the generated
+id. That call resolves only when the method's name equals the `UniversalServer` member the generator
+names from the operationId (`GeneratorSafeNames.swiftMemberName(for:strategy:)`); a renamed
+`@RawOperation("<id>")` method produces a call to a member that does not exist, which is tracked as a
+defect in https://github.com/swift-wire/wire-open-api/issues/63. `invoke` SHALL collect the request body, pass it as `nil` when empty, and send the generated
 `HTTPResponse` and body through the sender it was given.
 
 #### Scenario: a request-scoped operation
@@ -207,7 +211,7 @@ NOT construct a new `UniversalServer` per request.
 - **WHEN** `GET /api/v2/orders/7` and `/api/v2/orders/9` are served by the request-scoped `OrderController`
 - **THEN** each response carries its own id and path, and the log shows `scope: order trace for /api/v2/orders/7`
 
-Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `other`, `order` and `order2` assertions and the `scope log` checks).
+Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `openapi`, `other`, `order` and `order2` assertions and the `scope log` checks).
 
 ### Requirement: Scope teardown runs after the response and on a throw
 A scoped terminal SHALL wrap the `invoke` call in `do`/`catch`, call `_ = await wireOpenAPITeardown()`
@@ -221,7 +225,7 @@ Pinned by: nothing yet.
 
 ### Requirement: The conformer lives in a per-document namespace
 Each group's `Conformer` SHALL be declared inside `enum _WireOpenAPISpec_<Group>`, with `<Group>`
-sanitised by `sanitizedKeyFragment`, or `enum _WireOpenAPISpec` for an empty group name. When the
+sanitised by `sanitizedKeyFragment`. When the
 document belongs to another module `M`, the namespace SHALL first declare
 `typealias APIProtocol = M.APIProtocol`, `typealias Components = M.Components`,
 `typealias Operations = M.Operations` and `typealias Servers = M.Servers`; for the compiling
