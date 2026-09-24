@@ -22,26 +22,47 @@ decided by WireOpenAPIGen reading the source, not by the macro.
 
 #### Scenario: a marked method compiles unchanged
 - **WHEN** `TaskListController` declares `@RawOperation func listTasks(_ input: Operations.ListTasks.Input) async throws -> Operations.ListTasks.Output`
-- **THEN** the fixture builds with the method as written, and `GET /api/v1/tasks` answers `200` with `["1","2","3"]`
+- **THEN** the fixture builds with the method as written, and `GET /api/v1/tasks` answers `200` with a body containing `"3"`
 
-Pinned by: `Sources/WireOpenAPI/OpenAPIController.swift` (the macro declarations), `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `list` assertion). The empty expansion of the operation markers is pinned by nothing yet.
+Pinned by: `Sources/WireOpenAPI/OpenAPIController.swift` (the macro declarations), `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `list` assertion), `Tests/WireOpenAPIMacrosTests/OpenAPIControllerMacroTests.swift` (`testMarkerExpandsToNothing`, which pins that `OpenAPIControllerMacro` expands to nothing when attached as `@OpenAPIController` to a struct). No test attaches an operation marker to a method, so the empty expansion of the markers themselves is pinned by nothing yet.
 
 ### Requirement: The bare marker takes the method name as the operationId
 `ControllerScanner` SHALL take a method's operationId from the string literal passed to
 `@RawOperation(_:)` or `@Operation(_:)` when one is given, and from the method's own name otherwise.
-The conformer SHALL implement the `APIProtocol` requirement named
-`GeneratorSafeNames.swiftMemberName(for: operationID, strategy:)` and forward it to the method by
-the method's own name.
 
 #### Scenario: the bare form
 - **WHEN** `TaskController` declares a bare `@RawOperation func getTask(_ input: Operations.GetTask.Input)`
 - **THEN** it implements operationId `getTask`, and `GET /api/v1/tasks/42` answers `200` with a title of `task-42 via /api/v1/tasks/42`
 
 #### Scenario: the declared form
-- **WHEN** a controller declares `@RawOperation("get-task") func fetch(_ input: Operations.GetTask.Input) async throws -> Operations.GetTask.Output` under the `defensive` strategy
-- **THEN** the conformer declares the requirement `GeneratorSafeNames.swiftMemberName(for: "get-task", strategy: .defensive)` and its body calls `fetch(input)`
+- **WHEN** a controller declares `@RawOperation("get-task") func fetch(_ input: Operations.get_hyphen_task.Input) async throws -> Operations.get_hyphen_task.Output` under the `defensive` strategy, against a document declaring `get-task`
+- **THEN** `diagnoseCoverage` counts operationId `get-task` as implemented by `fetch`
 
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `openapi` assertion). The declared form is pinned by nothing yet.
+
+### Requirement: The conformer names the requirement from the operationId and forwards to the method
+The conformer SHALL implement the `APIProtocol` requirement named
+`GeneratorSafeNames.swiftMemberName(for: operationID, strategy:)` and forward it to the method by
+the method's own name.
+
+#### Scenario: a renamed method under the defensive strategy
+- **WHEN** a controller declares `@RawOperation("get-task") func fetch(_ input: Operations.get_hyphen_task.Input) async throws -> Operations.get_hyphen_task.Output` under the `defensive` strategy
+- **THEN** the conformer declares `func get_hyphen_task(_ input: Operations.get_hyphen_task.Input) async throws -> Operations.get_hyphen_task.Output`, and its body calls `fetch(input)`
+
+Pinned by: `.github/workflows/build.yml` (`Fixtures` job, `Build` step) for methods whose name is the operationId. A renamed method is pinned by nothing yet.
+
+### Requirement: The route terminal calls the generated server method by the method's own name
+The route terminal SHALL call `wireOpenAPIServer.<methodName>(request:body:metadata:)` with the
+author's method name, while `UniversalServer` names its per-operation methods from the operationId.
+A declared-form method therefore builds only when its name equals
+`GeneratorSafeNames.swiftMemberName(for: operationID, strategy:)`; a renamed method fails to compile,
+which is tracked as a defect in https://github.com/swift-wire/wire-open-api/issues/63.
+
+#### Scenario: a renamed method
+- **WHEN** a controller declares `@RawOperation("get-task") func fetch(_ input: Operations.get_hyphen_task.Input) async throws -> Operations.get_hyphen_task.Output` under the `defensive` strategy
+- **THEN** the generated terminal calls `wireOpenAPIServer.fetch(request:body:metadata:)`, `UniversalServer` declares only `get_hyphen_task(request:body:metadata:)`, and the build fails
+
+Pinned by: nothing yet.
 
 ### Requirement: `@RawOperation` takes one `Input` and returns its `Output`
 A `@RawOperation` method SHALL declare exactly one parameter and a return type, and its forwarder
@@ -183,6 +204,8 @@ SHALL be refused when the document declares zero or several with
 `@JSONResponse(status:)` or `@ResponseStatus(_:)` SHALL be matched against the document's responses
 by `GeneratorStatusNames.safeName(for:)`, and one the document does not declare SHALL be refused with
 `error: @JSONResponse(status: .<name>) on '<id>' names a status the document does not declare. It declares <code> (.<case>), ….`
+The message SHALL say `@JSONResponse(status:)` whichever of the two annotations named the status,
+which is tracked as a defect in https://github.com/swift-wire/wire-open-api/issues/89.
 
 #### Scenario: a non-200 success inferred
 - **WHEN** `createTask` names no status and its document declares only `201` among its successes
@@ -242,7 +265,7 @@ when no config is passed, the key is absent, or its value is not a known strateg
 - **WHEN** the config omits `namingStrategy`
 - **THEN** the strategy is `.defensive`
 
-Pinned by: `Tests/WireOpenAPINamingTests/GeneratorSafeNamesTests.swift` (`generatorDefaultIsDefensive`, `reproducesTheGenerator`), `.github/workflows/build.yml` (`Fixtures` job, the `typed` assertion, and step `Check the naming golden table against the real generator`).
+Pinned by: `Tests/WireOpenAPINamingTests/GeneratorSafeNamesTests.swift` (`generatorDefaultIsDefensive`, which pins that `GeneratorNamingStrategy.generatorDefault` is `.defensive`, and `reproducesTheGenerator`), `.github/workflows/build.yml` (`Fixtures` job, the `typed` assertion, and step `Check the naming golden table against the real generator`). The fallback to `generatorDefault` from a missing config, a missing `namingStrategy` key or an unknown value is pinned by nothing yet.
 
 ### Requirement: A graph-aware binding is resolved by its worker inside the forwarder
 A parameter attribute naming a type declared anywhere in the scanned sources with
@@ -290,9 +313,11 @@ Pinned by: nothing yet.
 
 ### Requirement: A marked method naming an undeclared operation is an error
 When a marked method's operationId is not declared by the document, WireOpenAPIGen SHALL write
-`error: '<method>' is marked as operation '<id>', which the document does not declare. <declared>`
-where `<declared>` is `It declares '<a>', '<b>'.` over the sorted operationIds, or
-`The document declares none.`, and exit with status 1.
+`error: '<method>' is marked as operation '<id>', which the document does not declare. It declares '<a>', '<b>'.`
+over the sorted operationIds, and exit with status 1. A document declaring no operations never
+reaches this check: `diagnoseCoverage` refuses it first with
+`error: @OpenAPIController needs the OpenAPI document to derive its routes, and none was passed (--spec).`,
+which is tracked as a defect in https://github.com/swift-wire/wire-open-api/issues/88.
 
 #### Scenario: a misspelt method
 - **WHEN** a controller declares `@RawOperation func getTasks(_ input: Operations.GetTasks.Input) async throws -> Operations.GetTasks.Output` against the fixture's Tasks document
@@ -317,7 +342,9 @@ Every refusal above SHALL be written to standard error as `<file>:<line>: error:
 end the run with exit status 1, writing no output file. A refusal found while scanning SHALL name the
 scanned file and the line of the method or parameter; one found against the document SHALL name the
 line of the operation's method where one is in hand and the controller's line otherwise, with
-`<file>` the source file of the group's first controller.
+`<file>` always the source file of the group's first controller. When a group's controllers span
+files, the location of a refusal for a method outside that file pairs the method's line with the
+wrong file, which is tracked as a defect in https://github.com/swift-wire/wire-open-api/issues/87.
 
 #### Scenario: the fixture compiles clean
 - **WHEN** the `Fixtures` package is built with every controller as checked in
