@@ -48,13 +48,15 @@ closure's value, serialised by the generated server.
 Pinned by: `Sources/DiagnosticGoldenTool/diagnostics-golden.txt` (`route-scope/closure-form-against-a-bare-response`), `.github/workflows/build.yml` (probe `mappedDocumented`).
 
 ### Requirement: Only JSON response bodies can be constructed
-WireOpenAPIGen SHALL reject a mapping whose documented response declares more than one content type
-or a content type other than `application/json`, with `@ErrorResponse(<E>.self, .<status>) on
-'<operationId>' maps to a <code> response whose content type this adapter cannot construct — it
-builds JSON bodies only. Use @RawOperation for this operation.`
+At route scope, WireOpenAPIGen SHALL reject a body-form mapping whose documented response declares
+more than one content type or a content type other than `application/json`, with
+`@ErrorResponse(<E>.self, .<status>) on '<operationId>' maps to a <code> response whose content type
+this adapter cannot construct — it builds JSON bodies only. Use @RawOperation for this operation.`
+This check runs after the route-scope form check, so a pair form against such a response is reported
+with the pair-form message instead.
 
 #### Scenario: a non-JSON 404
-- **WHEN** `opA`'s 404 declares a non-JSON content type and `@ErrorResponse(Gone.self, .notFound)` names it
+- **WHEN** `opA`'s 404 declares only `application/xml` and `opA` declares `@ErrorResponse(Gone.self, .notFound, { … })`
 - **THEN** WireOpenAPIGen reports `@ErrorResponse(Gone.self, .notFound) on 'opA' maps to a 404 response whose content type this adapter cannot construct — it builds JSON bodies only. Use @RawOperation for this operation.`
 
 Pinned by: `Sources/DiagnosticGoldenTool/diagnostics-golden.txt` (`route-scope/unconstructible-content-type`).
@@ -77,21 +79,31 @@ WireOpenAPIGen SHALL reject a route-scope mapping, other than a terminal-scoped 
 operation does not document, with `@ErrorResponse(<E>.self, .<status>) on '<operationId>' maps to a
 status the document does not declare for it. It declares <statuses>. A mapped error is answered as one
 of the operation's own responses, so the document has to describe it — add it there, or map to one it
-already declares.` A route-scope mapping to `.internalServerError` SHALL NOT be reported.
+already declares.` A route-scope mapping to `.internalServerError` SHALL NOT be reported by this rule.
+Where the operation does not document 500, the forwarder still emits a clause for that mapping which
+returns `.internalServerError(.init())`, a case the operation's generated `Output` does not have, so
+the generated code fails to compile; this is tracked as a defect in
+https://github.com/swift-wire/wire-open-api/issues/64.
 
 #### Scenario: an undeclared 404
 - **WHEN** `opA` documents only 200 and declares `@ErrorResponse(Gone.self, .notFound)`
 - **THEN** WireOpenAPIGen reports `@ErrorResponse(Gone.self, .notFound) on 'opA' maps to a status the document does not declare for it. It declares .ok. A mapped error is answered as one of the operation's own responses, so the document has to describe it — add it there, or map to one it already declares.`
 
-Pinned by: `Sources/DiagnosticGoldenTool/diagnostics-golden.txt` (`route-scope/status-not-declared`).
+#### Scenario: an undeclared 500
+- **WHEN** `opA` documents only 200 and declares `@ErrorResponse(Gone.self, .internalServerError)`
+- **THEN** WireOpenAPIGen reports nothing for the mapping, and the forwarder's `catch is Gone` clause returns `.internalServerError(.init())`, which the operation's generated `Output` does not declare
+
+Pinned by: `Sources/DiagnosticGoldenTool/diagnostics-golden.txt` (`route-scope/status-not-declared`). The `.internalServerError` exemption is pinned by nothing yet.
 
 ### Requirement: A status name must resolve
-WireOpenAPIGen SHALL reject a non-terminal-scoped mapping whose status is not the safe name of any
-code from 100 to 599 with `@ErrorResponse(<E>.self, .<status>) on '<operationId>' names a status this
-adapter cannot resolve. Use one of HTTPResponse.Status's named cases.`
+WireOpenAPIGen SHALL reject a route-scope mapping, other than a terminal-scoped one, whose status is
+not the safe name of any code from 100 to 599 with `@ErrorResponse(<E>.self, .<status>) on '<operationId>' names a status this
+adapter cannot resolve. Use one of HTTPResponse.Status's named cases.` A controller-scope mapping's
+status is not checked by this rule: a misspelled one is reported by the controller-scope
+undeclared-status rule, which names 500 as the status every covered operation has to declare.
 
 #### Scenario: a misspelled status
-- **WHEN** an operation declares `@ErrorResponse(Gone.self, .notFond)`
+- **WHEN** an `@Operation` declares `@ErrorResponse(Gone.self, .notFond)`
 - **THEN** WireOpenAPIGen reports `@ErrorResponse(Gone.self, .notFond) on '<operationId>' names a status this adapter cannot resolve. Use one of HTTPResponse.Status's named cases.`
 
 Pinned by: nothing yet.
@@ -128,8 +140,8 @@ concerned.
 Pinned by: `Sources/DiagnosticGoldenTool/diagnostics-golden.txt` (`controller-scope/covered-operations-disagree-about-a-body`, `controller-scope/pair-form-against-a-bodied-response`, `controller-scope/closure-form-against-a-bare-response`, `controller-scope/unconstructible-content-type`, `accepted/per-operation-forms-are-the-remedy-for-disagreement`).
 
 ### Requirement: A scoped controller's mapping is declared by operations that shadow it
-For a `@Scoped(seed:)` controller, WireOpenAPIGen SHALL also require an operation that maps the same
-error type itself to document the controller mapping's status, reporting `@ErrorResponse(<E>.self,
+For a `@Scoped(seed:)` controller's mapping that is not terminal-scoped, WireOpenAPIGen SHALL also
+require an operation that maps the same error type itself to document the controller mapping's status, reporting `@ErrorResponse(<E>.self,
 .<status>) on '<Controller>' also answers a failure entering its request scope, which happens before
 an operation is dispatched — so it applies to <operations> too, despite their own mapping of the same
 error, and the document does not declare <code> there. Add it, or drop the controller-scope mapping.`
@@ -194,16 +206,18 @@ conformance, which is how `ServerError` answers; and otherwise it SHALL rethrow.
 Pinned by: `.github/workflows/build.yml` (probes `mappedDecode`, `mappedDecodeInside`, `missingBody`, `wrongType`).
 
 ### Requirement: A terminal-side mapped response sets only `Content-Type`
-The terminal's mapping closure SHALL unwrap `ServerError.underlyingError` before matching, SHALL
-answer a pair-form mapping with `HTTPResponse(status:)` and no body, and SHALL answer a body-form
-mapping with the closure's value encoded by a default `JSONEncoder` under the single header
-`Content-Type: application/json`. A body that fails to encode SHALL fall through to the next clause.
+The mapping closure WireOpenAPIGen emits for the terminal's `rejectionResponse`, whose builder the
+scope-entry closure passed to `WireOpenAPIRoutes.refuse` shares, SHALL unwrap
+`ServerError.underlyingError` before matching, SHALL answer a pair-form mapping with
+`HTTPResponse(status:)` and no body, and SHALL answer a body-form mapping with the closure's value
+encoded by a default `JSONEncoder` under the single header `Content-Type: application/json`. A body
+that fails to encode SHALL fall through to the next clause.
 
-#### Scenario: a body-form mapping answered outside the forwarder
+#### Scenario: a body-form mapping answered by the scope-entry closure
 - **WHEN** `GatedTaskController` maps `Unauthenticated` with `{ _ in Components.Schemas.Problem(message: "no user") }` and the scope refuses
 - **THEN** the answer is `401` with a body containing `"message":"no user"`
 
-Pinned by: `.github/workflows/build.yml` (probe `gated`).
+Pinned by: `.github/workflows/build.yml` (probe `gated`) pins the status and body of a body-form mapping through the scope-entry closure. The terminal's `rejectionResponse` path, the pair-form answer, the single `Content-Type` header and the encode-failure fall-through are pinned by nothing yet.
 
 ### Requirement: A failure entering the request scope is answered by controller-scope mappings
 For a `@Scoped(seed:)` controller with controller-scope mappings, the generated terminal SHALL enter
