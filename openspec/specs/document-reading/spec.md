@@ -5,8 +5,11 @@
 How WireOpenAPIGen reads an OpenAPI document: which versions it accepts and through which model,
 how it resolves references, and what it extracts for each `operationId` (method, path, parameters,
 responses and request body). Everything the generator knows about an operation comes from the
-document source file, never from swift-openapi-generator's emitted Swift. The per-document settings
-read beside the document are specified where they take effect and linked below.
+document source file, never from swift-openapi-generator's emitted Swift. A document is read only
+when at least one `@OpenAPIController` in the build implements it (a bare one in the document's own
+module, or one naming that module with `spec:`); a document no controller implements is never read,
+so the build errors below do not arise for it. The per-document settings read beside the document
+are specified where they take effect and linked below.
 
 Rationale: [WireOpenAPIAdvanced](../../../Documentation/Notes/WireOpenAPIAdvanced.md), [WireOpenAPIValidation](../../../Proposals/WireOpenAPIValidation.md).
 
@@ -39,7 +42,7 @@ When the file has no `openapi:` key, WireOpenAPIGen SHALL write
 to standard error and exit with status 1.
 
 #### Scenario: a YAML file that is not an OpenAPI document
-- **WHEN** the file passed as `--spec` is `info: { title: X, version: 1.0.0 }` with no `openapi:` line
+- **WHEN** the file passed as `--spec` is `info: { title: X, version: 1.0.0 }` with no `openapi:` line, and a bare `@OpenAPIController` is declared in the same target
 - **THEN** the generator exits 1 with `error: the OpenAPI document has no `openapi:` version, so it cannot be read as an OpenAPI document.`
 
 Pinned by: nothing yet.
@@ -66,19 +69,20 @@ standard error and exit with status 1.
 
 Pinned by: nothing yet.
 
-### Requirement: References are resolved one hop at each read site
-WireOpenAPIGen SHALL resolve a `$ref` against the Components Object with one lookup at each of the
-places it reads: the path item, each parameter, each response, the request body, and a JSON content
-entry. It SHALL NOT ask for a fully dereferenced document.
+### Requirement: References are resolved where they are read
+WireOpenAPIGen SHALL resolve a `$ref` at each of the places it reads (the path item, each parameter,
+each response, the request body, and a JSON content entry) with `Components.lookup`, which follows a
+chain of component-to-component references to a concrete value and reports a cycle among them as
+unresolvable. It SHALL NOT dereference the document as a whole.
 
 #### Scenario: a parameter declared by reference
 - **WHEN** `summariseTask` declares its path parameter as `{ $ref: '#/components/parameters/TaskId' }` and the handler binds `@Path id: String`
 - **THEN** the binding is accepted as a declared path parameter, and `GET /api/v1/tasks/9/summary` is served
 
-Pinned by: `Fixtures/Sources/WireOpenAPIBootstrapExample/openapi.yaml` (`summariseTask`), `Fixtures/Sources/WireOpenAPIBootstrapExample/Controllers.swift` (`summariseTask`), `.github/workflows/build.yml` (`Fixtures` job, `Build` step, and the `typed` assertion of step `Serve an OpenAPI operation and a @Get route from one router`).
+Pinned by: `Fixtures/Sources/WireOpenAPIBootstrapExample/openapi.yaml` (`summariseTask`), `Fixtures/Sources/WireOpenAPIBootstrapExample/Controllers.swift` (`summariseTask`), `.github/workflows/build.yml` (`Fixtures` job, `Build` step, and the `typed` assertion of step `Serve an OpenAPI operation and a @Get route from one router`). Following a chain of component references, and reporting a cycle among them, is pinned by nothing yet.
 
 ### Requirement: An unresolvable reference is a build error naming the document
-When a one-hop lookup fails, WireOpenAPIGen SHALL write
+When a lookup fails, WireOpenAPIGen SHALL write
 `<document>: error: the OpenAPI document has <what> that could not be resolved: <error>` to standard
 error and exit with status 1, where `<what>` names the site, for example
 `a parameter reference in '<operationId>'` or `a path item reference for '<path>'`.
@@ -90,10 +94,15 @@ error and exit with status 1, where `<what>` names the site, for example
 Pinned by: nothing yet.
 
 ### Requirement: A schema `$ref` is kept as a name, not followed
-When WireOpenAPIGen reads a schema's assertions and meets a `$ref`, it SHALL record the referenced
-component schema's name and SHALL NOT follow the reference, so a recursive schema is read in finite
-time. Every entry of `components.schemas` SHALL be read once, under its document name. A schema
-reference with no component name SHALL fail with
+When WireOpenAPIGen reads a schema's assertions and meets a `$ref`, it SHALL record the reference's
+last path segment as a schema name and SHALL NOT follow the reference, so a recursive schema is read
+in finite time. Every entry of `components.schemas` SHALL be read once, under its document name. A
+recorded name with no matching entry in `components.schemas` (including one taken from a reference
+outside `#/components/schemas`, an external reference, or a dangling one) is treated as asserting
+nothing and is not diagnosed here. No such document reaches this point in a build, because
+swift-openapi-generator validates that every reference is found in `components` and fails the build
+first. A schema reference with no path segment at
+all SHALL fail with
 `<document>: error: the OpenAPI document has a schema reference for <subject> this adapter cannot name: <reference>`
 and exit status 1.
 
@@ -105,11 +114,15 @@ and exit status 1.
 - **WHEN** the Orders document's `Order` declares a `relatedOrders` array of `Order`
 - **THEN** the fixture builds
 
-Pinned by: `Fixtures/Sources/WireOpenAPIBootstrapExample/openapi.yaml` (`Task.subtasks`), `Fixtures/Sources/OrdersAPI/openapi.yaml` (`relatedOrders`), `.github/workflows/build.yml` (`Fixtures` job, `Build` step, and the `assertNested` probe).
+Pinned by: `Fixtures/Sources/WireOpenAPIBootstrapExample/openapi.yaml` (`Task.subtasks`), `Fixtures/Sources/OrdersAPI/openapi.yaml` (`relatedOrders`), `.github/workflows/build.yml` (`Fixtures` job, `Build` step, and the `assertNested` probe). The handling of a name with no matching component, and the `cannot name` diagnostic, are pinned by nothing yet.
 
 ### Requirement: Path-level parameters apply to every operation beneath them
 For each operation, WireOpenAPIGen SHALL read the path item's `parameters` followed by the
-operation's own `parameters` as that operation's declared parameters.
+operation's own `parameters` as that operation's declared parameters. The lists are concatenated
+without OpenAPI's override rule: an operation parameter that redeclares a path-level one of the same
+name and location leaves both entries, binding diagnostics match the path-level one first, and both
+sets of assertions are checked, which is tracked as a possible defect in
+https://github.com/swift-wire/wire-open-api/issues/94.
 
 #### Scenario: an `id` declared on the path item
 - **WHEN** `/tasks/{id}` declares `parameters: [{ name: id, in: path, required: true, schema: { type: string } }]` at path level and `getTask` declares none
@@ -159,11 +172,13 @@ Pinned by: `.github/workflows/build.yml` (`Fixtures` job, the `replaced` and `re
 
 ### Requirement: An operation without an `operationId` is not read
 WireOpenAPIGen SHALL key each operation by its `operationId` and SHALL skip an operation that
-declares none.
+declares none. swift-openapi-generator does not skip it, so a document containing one cannot be
+served through `@OpenAPIController`, which is tracked as a possible defect in
+https://github.com/swift-wire/wire-open-api/issues/93.
 
 #### Scenario: an anonymous operation
 - **WHEN** `/health` declares `get:` with no `operationId`
-- **THEN** no route is derived for it
+- **THEN** no route is derived for it and no controller can mark it, while swift-openapi-generator makes up the id `get/health` and still emits an `APIProtocol` requirement for it, which the emitted `Conformer` has no method for, so the build fails with a conformance error in generated code
 
 Pinned by: nothing yet.
 
