@@ -36,8 +36,8 @@ WireMVCKeys.routeContributors, proxyTypeName: "_WireOpenAPIContributor", proxySc
 groupedByAttribute: "spec")`. The controller itself SHALL NOT enter the collection; the proxy does.
 
 #### Scenario: a controller declared with the marker and a scope annotation
-- **WHEN** a target applying the build plugin declares `@Singleton @OpenAPIController() struct TaskListController<Store: TaskStoring>` and the generated `@main` applies the graph to the router
-- **THEN** `GET /api/v1/tasks` is served through the proxy collated into `WireMVCKeys.routeContributors`, and the response is `200` with the body `["1","2","3"]`
+- **WHEN** a target applying swift-wire's `WireBuildPlugin` and `WireOpenAPIGenPlugin` declares `@Singleton @OpenAPIController() struct TaskListController<Store: TaskStoring>` and the generated `@main` applies the graph to the router
+- **THEN** `GET /api/v1/tasks` is served through the proxy collated into `WireMVCKeys.routeContributors`, and the response is `200` with a body that includes `"3"`
 
 Pinned by: `Sources/WireOpenAPI/OpenAPIController.swift` (the alias declaration), `Fixtures/Sources/WireOpenAPIBootstrapExample/Controllers.swift` (probed by the `list` assertion of step `Serve an OpenAPI operation and a @Get route from one router` in the `Fixtures` job of `.github/workflows/build.yml`).
 
@@ -56,8 +56,11 @@ Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI
 `ControllerScanner` SHALL visit `StructDeclSyntax`, `ClassDeclSyntax` and `ActorDeclSyntax` nodes
 and record each one carrying an attribute named exactly `OpenAPIController` as a
 `DiscoveredController` whose `homeModule` is the `--module` name its source file was passed under,
-whose `spec` is the string literal of the `spec:` argument when present, and whose `seed` is the
-type named by `@Scoped(seed: S.self)` when present.
+whose `spec` is the value of the `spec:` argument when that argument is a plain string literal, and
+whose `seed` is the type named by `@Scoped(seed: S.self)` when present. Any other `spec:` expression,
+such as a constant or an interpolated literal, is recorded as no `spec`, so the controller is grouped
+as if bare with no diagnostic, which is tracked as a defect in
+https://github.com/swift-wire/wire-open-api/issues/81.
 
 #### Scenario: a public struct in a dependency module
 - **WHEN** the plugin passes `--module OrdersAPI OrderController.swift` and that file declares `@Scoped(seed: HTTPRequest.self) @OpenAPIController(spec: "OrdersAPI") public struct OrderController: Sendable`
@@ -83,9 +86,10 @@ Pinned by: `Sources/WireOpenAPIGen/main.swift` (the `byGroup` loop), `.github/wo
 
 ### Requirement: `spec:` names the module owning the generated `APIProtocol`
 `@OpenAPIController(spec: "M")` SHALL group the controller under `M` regardless of where the
-controller is declared, and WireOpenAPIGen SHALL compile that group against the document passed as
-`--spec-module M <document>`, qualifying the generated types as `M.APIProtocol`, `M.Operations`,
-`M.Components` and `M.Servers`.
+controller is declared. When `M` is not the compiling module, WireOpenAPIGen SHALL compile that group
+against the document passed as `--spec-module M <document>`, qualifying the generated types as
+`M.APIProtocol`, `M.Operations`, `M.Components` and `M.Servers`; when `M` names the compiling module,
+the group is treated exactly as the bare form, compiled against `--spec` with nothing qualified.
 
 #### Scenario: a controller in the app implementing a dependency's document
 - **WHEN** `OrderSummaryController` is declared in `WireOpenAPIBootstrapExample` with `@OpenAPIController(spec: "OrdersAPI")` and implements `listOrders`
@@ -127,7 +131,10 @@ When a controller's `spec:` value is neither the compiling module nor a module p
 `<file>:<line>: error: @OpenAPIController(spec: "<M>") names the module owning the generated APIProtocol, and no dependency of this target is called '<M>'. <available> For the document beside this controller, use the bare @OpenAPIController().`
 to standard error and exit with status 1, where `<available>` is
 `This target depends on no module carrying an OpenAPI document.` when no `--spec-module` was passed
-and `Modules carrying one: <sorted names>.` otherwise.
+and `Modules carrying one: <sorted names>.` otherwise. The message and its location are taken from
+the first controller discovered in the group (the compiling module's sources are scanned first), so
+this message is written only when that controller carries `spec:`, which is tracked as a defect in
+https://github.com/swift-wire/wire-open-api/issues/80.
 
 #### Scenario: a typo in the module name
 - **WHEN** a controller declares `@OpenAPIController(spec: "OrderAPI")` and the only `--spec-module` is `OrdersAPI`
@@ -139,7 +146,11 @@ Pinned by: nothing yet.
 When a bare `@OpenAPIController()` is declared in a module other than the compiling one and no
 `--spec-module` names that module, WireOpenAPIGen SHALL write
 `<file>:<line>: error: '<Type>' is declared in module '<M>', which carries no OpenAPI document — a bare @OpenAPIController implements the document beside it. Put the document in '<M>', or name the module that owns the generated APIProtocol with @OpenAPIController(spec: "..."). <available>`
-to standard error and exit with status 1.
+to standard error and exit with status 1. The message and its location are taken from the first
+controller discovered in the group (the compiling module's sources are scanned first), so this message
+is written only when that controller is bare; a group whose first controller carries `spec:` gets the
+`spec:` message instead, which is tracked as a defect in
+https://github.com/swift-wire/wire-open-api/issues/80.
 
 #### Scenario: a library controller with no document beside it
 - **WHEN** `Shared` is a Wire-aware dependency holding `@OpenAPIController() struct SharedController` and no `openapi.yaml`, and the app's own document is passed as `--spec`
@@ -148,9 +159,9 @@ to standard error and exit with status 1.
 Pinned by: nothing yet.
 
 ### Requirement: A compiling target with controllers and no document is a build error
-When a group resolves to the compiling module and no `--spec` was passed, `diagnoseCoverage` SHALL
-write `<file>:<line>: error: @OpenAPIController needs the OpenAPI document to derive its routes, and none was passed (--spec).`
-to standard error and exit with status 1.
+When a group's document yields no operations, `diagnoseCoverage` SHALL write `<file>:<line>: error: @OpenAPIController needs the OpenAPI document to derive its routes, and none was passed (--spec).`
+to standard error and exit with status 1. The same message is written whether no `--spec` was passed
+for the compiling module, the document path cannot be read, or the document declares no operations.
 
 #### Scenario: the document is missing from the target
 - **WHEN** the compiling target declares a bare `@OpenAPIController()` and holds no `.yaml`, `.yml` or `.json` source other than `openapi-generator-config.yaml` and `wire-openapi.yaml`
@@ -201,9 +212,9 @@ controller that declared it.
 
 #### Scenario: the fixture controllers
 - **WHEN** `TaskController`, `TaskListController`, `GatedTaskController`, `OrderController` and `OrderSummaryController` are declared with no `: APIProtocol` clause
-- **THEN** the fixture builds, and every operation of both documents is served
+- **THEN** the fixture builds, so the generated `Conformer` of each document satisfies `APIProtocol`
 
-Pinned by: `Fixtures/Sources/WireOpenAPIBootstrapExample/Controllers.swift`, `Fixtures/Sources/OrdersAPI/OrderController.swift` (built and probed by the `Fixtures` job in `.github/workflows/build.yml`).
+Pinned by: `Fixtures/Sources/WireOpenAPIBootstrapExample/Controllers.swift`, `Fixtures/Sources/OrdersAPI/OrderController.swift` (built by the `Build` step of the `Fixtures` job in `.github/workflows/build.yml`).
 
 ## Related specifications
 
