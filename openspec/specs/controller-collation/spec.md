@@ -36,7 +36,7 @@ WireMVCKeys.routeContributors, proxyTypeName: "_WireOpenAPIContributor", proxySc
 groupedByAttribute: "spec")`. The controller itself SHALL NOT enter the collection; the proxy does.
 
 #### Scenario: a controller declared with the marker and a scope annotation
-- **WHEN** a target applying swift-wire's `WireBuildPlugin` and `WireOpenAPIGenPlugin` declares `@Singleton @OpenAPIController() struct TaskListController<Store: TaskStoring>` and the generated `@main` applies the graph to the router
+- **WHEN** a target applying swift-wire's `WireBuildPlugin` and `WireOpenAPIGenPlugin` declares `@Singleton @OpenAPIController() struct TaskListController<Store: TaskStoring>` implementing its document's `listTasks` (`GET /tasks` under the server `/api/v1`) by answering `.ok` with the JSON array `["1", "2", "3"]`, and the generated `@main` applies the graph to the router
 - **THEN** `GET /api/v1/tasks` is served through the proxy collated into `WireMVCKeys.routeContributors`, and the response is `200` with a body that includes `"3"`
 
 Pinned by: `Sources/WireOpenAPI/OpenAPIController.swift` (the alias declaration), `Fixtures/Sources/WireOpenAPIBootstrapExample/Controllers.swift` (probed by the `list` assertion of step `Serve an OpenAPI operation and a @Get route from one router` in the `Fixtures` job of `.github/workflows/build.yml`).
@@ -75,7 +75,7 @@ module being compiled. When that group equals the compiling module the document 
 `--spec`; otherwise it is the one passed as `--spec-module <group> <document>`.
 
 #### Scenario: a bare controller in the compiling target
-- **WHEN** `TaskController` is declared with a bare `@OpenAPIController()` in `WireOpenAPIBootstrapExample`, the module passed first under `--module`
+- **WHEN** `TaskController` is declared with a bare `@OpenAPIController()` in `WireOpenAPIBootstrapExample`, the module passed first under `--module`, and implements `getTask`, which that module's document declares as `GET /tasks/{id}` under the server `/api/v1`
 - **THEN** it is grouped under `WireOpenAPIBootstrapExample` and compiled against the document passed as `--spec`, so `GET /api/v1/tasks/42` serves it
 
 #### Scenario: a bare controller in a dependency that owns its document
@@ -92,7 +92,7 @@ against the document passed as `--spec-module M <document>`, qualifying the gene
 the group is treated exactly as the bare form, compiled against `--spec` with nothing qualified.
 
 #### Scenario: a controller in the app implementing a dependency's document
-- **WHEN** `OrderSummaryController` is declared in `WireOpenAPIBootstrapExample` with `@OpenAPIController(spec: "OrdersAPI")` and implements `listOrders`
+- **WHEN** `OrderSummaryController` is declared in `WireOpenAPIBootstrapExample` with `@OpenAPIController(spec: "OrdersAPI")` and implements `listOrders`, which `OrdersAPI`'s document declares as `GET /orders` under the server `/api/v2`, by answering `.ok` with the items `item-7` and `item-9`, while the app's own document declares its `/tasks` paths under the server `/api/v1`
 - **THEN** `GET /api/v2/orders` answers `200` with a body containing `"item-7"` and `"item-9"`, and `GET /api/v2/tasks` answers `404`
 
 Pinned by: `Fixtures/Sources/WireOpenAPIBootstrapExample/Controllers.swift`, `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `summary` and `crossed2` assertions).
@@ -104,11 +104,11 @@ and SHALL emit exactly one `extension _WireOpenAPIContributor_<Group>: RouteCont
 carrying every operation of every controller in it.
 
 #### Scenario: three controllers on the compiling target's document
-- **WHEN** `TaskController`, `TaskListController` and `GatedTaskController` all carry a bare `@OpenAPIController()` in `WireOpenAPIBootstrapExample`
+- **WHEN** `TaskController`, `TaskListController` and `GatedTaskController` all carry a bare `@OpenAPIController()` in `WireOpenAPIBootstrapExample` and between them implement the operations its document declares: `getTask`, `authorizedTask`, `listTasks`, `summariseTask`, `createTask`, `deleteTask`, `replaceTask` and `gatedTask`
 - **THEN** the emitted file contains one `extension _WireOpenAPIContributor_WireOpenAPIBootstrapExample: RouteContributor` registering `getTask`, `authorizedTask`, `listTasks`, `summariseTask`, `createTask`, `deleteTask`, `replaceTask` and `gatedTask`
 
 #### Scenario: two controllers in two modules on one document
-- **WHEN** `OrderController` in `OrdersAPI` and `OrderSummaryController` in the app both resolve to group `OrdersAPI`
+- **WHEN** `OrderController` in `OrdersAPI` implements `getOrder` (`GET /orders/{id}`) and `OrderSummaryController` in the app implements `listOrders` (`GET /orders`), `OrdersAPI`'s document serves both under the server `/api/v2`, and both controllers resolve to group `OrdersAPI`
 - **THEN** the emitted file contains one `extension _WireOpenAPIContributor_OrdersAPI: RouteContributor` registering `getOrder` and `listOrders`, and `GET /api/v2/orders/7` and `GET /api/v2/orders` both answer `200`
 
 Pinned by: `Sources/WireOpenAPIGen/main.swift` (`proxyTypeName(for:)`), `.github/workflows/build.yml` (`Fixtures` job, `Build` step, and the `order` and `summary` assertions of step `Serve an OpenAPI operation and a @Get route from one router`).
@@ -120,8 +120,8 @@ controller, and from `self._wireSubject_<TypeName>` and `self._wireEnterScope_<T
 when it holds more than one.
 
 #### Scenario: a group of three
-- **WHEN** the `WireOpenAPIBootstrapExample` group holds `TaskController`, `TaskListController` and `GatedTaskController`
-- **THEN** the terminal for `getTask` calls `self._wireEnterScope_TaskController(request)` and the template conformer is built from `self._wireSubject_TaskListController`
+- **WHEN** the `WireOpenAPIBootstrapExample` group holds `TaskController`, which is `@Scoped(seed: HTTPRequest.self)` and implements `getTask`, the app-scoped `TaskListController`, and `GatedTaskController`
+- **THEN** the terminal for `getTask` calls `self._wireEnterScope_TaskController(request)`, and `TaskListController` is read from `self._wireSubject_TaskListController`
 
 Pinned by: `Sources/WireOpenAPIGen/DirectDispatchEmission.swift` (`subjectsAreLabelled`, `proxySubjectField`, `proxyScopeEntry`), `.github/workflows/build.yml` (`Fixtures` job, `Build` step). The single-controller spelling is pinned by nothing yet.
 
@@ -177,7 +177,7 @@ request through the proxy's scope-entry field. Whether the type is a valid graph
 by swift-wire, not by this generator.
 
 #### Scenario: an app-scoped and a request-scoped controller on one document
-- **WHEN** `TaskController` carries `@Scoped(seed: HTTPRequest.self)` and `TaskListController` carries `@Singleton`
+- **WHEN** `TaskController` carries `@Scoped(seed: HTTPRequest.self)`, implements `getTask` (`GET /api/v1/tasks/{id}`) and injects a request-scoped binding whose initialiser logs `scope: constructed for <request path>`, and `TaskListController` carries `@Singleton` and implements `listTasks` (`GET /api/v1/tasks`)
 - **THEN** `GET /api/v1/tasks/42` logs `scope: constructed for /api/v1/tasks/42` and `GET /api/v1/tasks` logs no `scope: constructed for /api/v1/tasks` line
 
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `scope log` assertions and the `an app-scoped controller's operation entered a request scope` check).
@@ -188,7 +188,7 @@ inherited type into the conformer, and rename the parameters of the controller a
 group with the prefix `_wireC<i>`, so that two controllers each declaring `Store` do not collide.
 
 #### Scenario: two controllers both generic over `Store`
-- **WHEN** `TaskController<Store: TaskStoring>` and `TaskListController<Store: TaskStoring>` share a group
+- **WHEN** the request-scoped `TaskController<Store: TaskStoring>` and the app-scoped `TaskListController<Store: TaskStoring>` share a group, discovered in that order
 - **THEN** the conformer is declared `struct Conformer<_wireC0Store: TaskStoring, _wireC1Store: TaskStoring>: APIProtocol` and holds `_wireSubject_TaskController: TaskController<_wireC0Store>?` and `_wireSubject_TaskListController: TaskListController<_wireC1Store>`
 
 Pinned by: `Sources/WireOpenAPIGen/ConformerGenerics.swift` (`genericPrefix`, `conformerGenericClause`), `Fixtures/Sources/WireOpenAPIBootstrapExample/Controllers.swift` (built by the `Build` step of the `Fixtures` job in `.github/workflows/build.yml`).
@@ -210,9 +210,9 @@ A controller SHALL NOT need to conform to `APIProtocol`. The conformance SHALL b
 generated `Conformer` struct inside the spec's namespace, which forwards each operation to the
 controller that declared it.
 
-#### Scenario: the fixture controllers
-- **WHEN** `TaskController`, `TaskListController`, `GatedTaskController`, `OrderController` and `OrderSummaryController` are declared with no `: APIProtocol` clause
-- **THEN** the fixture builds, so the generated `Conformer` of each document satisfies `APIProtocol`
+#### Scenario: controllers declared without the conformance
+- **WHEN** `TaskController`, `TaskListController`, `GatedTaskController`, `OrderController` and `OrderSummaryController`, which between them implement every operation of the Tasks and Orders documents, are declared with no `: APIProtocol` clause
+- **THEN** their targets build, so the generated `Conformer` of each document satisfies `APIProtocol`
 
 Pinned by: `Fixtures/Sources/WireOpenAPIBootstrapExample/Controllers.swift`, `Fixtures/Sources/OrdersAPI/OrderController.swift` (built by the `Build` step of the `Fixtures` job in `.github/workflows/build.yml`).
 
