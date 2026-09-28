@@ -41,7 +41,7 @@ operation's `@ErrorResponse` clauses when it has any. It SHALL be emitted for `@
 `@Operation` alike.
 
 #### Scenario: a raw operation with a path `pattern`
-- **WHEN** `getTask` is a `@RawOperation` whose `id` path parameter declares `pattern: '^[a-z0-9-]+$'` and maps `WireOpenAPIRequestValidationError` to its documented 422
+- **WHEN** `getTask`, declared at `GET /api/v1/tasks/{id}`, is a `@RawOperation` whose `id` path parameter declares `pattern: '^[a-z0-9-]+$'`, and it maps `WireOpenAPIRequestValidationError` to its documented 422 with a closure answering `Problem(message: "invalid: " + <the failures' paths, joined by ", ">)`
 - **THEN** `GET /api/v1/tasks/NOT-LOWERCASE` answers `422` with the body `{"message":"invalid: path.id"}` and the handler is not called
 
 Pinned by: `.github/workflows/build.yml` (job "Fixtures — serve and probe", probe `assertMapped`) for the `422` answer and its body. The ordering, and that the handler is not called, are pinned by nothing yet.
@@ -109,7 +109,7 @@ call to that schema's `schema_<Name>` function rather than an expansion, so a re
 one self-calling function.
 
 #### Scenario: a failure two levels into a recursive body
-- **WHEN** `POST /api/v1/tasks/new?title=t` carries `{"id":"x","title":"ok","subtasks":[{"id":"y","title":"fine"},{"id":"z","title":""}]}`
+- **WHEN** `createTask`, declared at `POST /api/v1/tasks/new` with a `Task` body whose `title` declares `minLength: 1` and whose `subtasks` are `$ref` to `Task`, maps `WireOpenAPIRequestValidationError` to its documented 422 with a closure answering `Problem(message: "rejected: " + <the failures' paths, joined by ", ">)`, and `POST /api/v1/tasks/new?title=t` carries `{"id":"x","title":"ok","subtasks":[{"id":"y","title":"fine"},{"id":"z","title":""}]}`
 - **THEN** the answer is `422` with the body `{"message":"rejected: body.subtasks[1].title"}`
 
 Pinned by: `.github/workflows/build.yml` (job "Fixtures — serve and probe", probe `assertNested`) for the `$ref` clause. The inline-object and `allOf` clauses are pinned by nothing yet.
@@ -185,7 +185,7 @@ Pinned by: `Tests/WireOpenAPITests/SchemaValidationTests.swift` (`capIsEnforcedA
 `.path`, `.query` or `.header`, and `.unprocessableContent` when every failure is in `.body`.
 
 #### Scenario: an unmapped path-parameter violation
-- **WHEN** `deleteTask`'s `id` declares `maxLength: 8`, nothing maps the validation error, and `POST /api/v1/tasks/far-too-long-to-be-an-id/delete` arrives
+- **WHEN** `deleteTask`, declared at `POST /api/v1/tasks/{id}/delete`, bounds its `id` path parameter with `maxLength: 8`, nothing maps the validation error, and `POST /api/v1/tasks/far-too-long-to-be-an-id/delete` arrives
 - **THEN** the answer is `400`
 
 #### Scenario: a body failure and a query failure together
@@ -204,7 +204,7 @@ unescaped slashes, with `"truncated":true` present only when the accumulator tru
 - **THEN** the body is exactly `{"errors":[{"actual":"ab","expected":"3","keyword":"minLength","path":"body.title"}]}`
 
 #### Scenario: unmapped over the wire
-- **WHEN** `replaceTask`, which maps no validation error, receives a body whose `title` is empty
+- **WHEN** `replaceTask`, which maps no validation error, takes a `Task` body whose `title` declares `minLength: 1`, and receives a body whose `title` is empty
 - **THEN** the answer is `422` and its body contains `"keyword":"minLength"` and `"path":"body.title"`
 
 Pinned by: `Tests/WireOpenAPITests/SchemaValidationTests.swift` (`unmappedBodyCarriesFailures`, `truncationAppearsOnlyWhenTrue`), `.github/workflows/build.yml` (probes `assertUnmapped`, `assertUnmappedBody`).
@@ -225,8 +225,8 @@ of `WireOpenAPIRequestValidationError` answers both a decode rejection and a gen
 - **THEN** the failure's path is `body.subtasks[1].title` and its keyword is `required`
 
 #### Scenario: both sides of the seam
-- **WHEN** `createTask` receives `{"id":"x"}`, which the deserializer refuses, and separately `{"id":"x","title":""}`, which the generated check refuses
-- **THEN** both answers are identical: `422` from the operation's one `@ErrorResponse(WireOpenAPIRequestValidationError.self, .unprocessableContent, …)`
+- **WHEN** `createTask`, whose `Task` body requires `id` and `title` and bounds `title` with `minLength: 1`, carries one `@ErrorResponse(WireOpenAPIRequestValidationError.self, .unprocessableContent, …)` and no `DecodingError` or catch-all mapping, and receives `{"id":"x"}`, which the deserializer refuses, and separately `{"id":"x","title":""}`, which the generated check refuses
+- **THEN** both answers are identical: `422` from that one mapping
 
 Pinned by: `Tests/WireOpenAPITests/SchemaValidationTests.swift` (`keyNotFound`, `typeMismatch`, `dataCorrupted`, `indexedPath`, `othersAreNotConverted`), `.github/workflows/build.yml` (probes `assertBody`, `assertDecodeSeam`). The `valueNotFound` conversion is pinned by nothing yet.
 
@@ -270,7 +270,7 @@ terminal's `rejectionResponse` closure builds, for a `DecodingError`, catch-all 
 `WireOpenAPIRequestValidationError` mapping, SHALL be sent without a response check.
 
 #### Scenario: a raw operation's output
-- **WHEN** `getOrder` is a `@RawOperation` and its document checks responses
+- **WHEN** `getOrder` is a `@RawOperation`, its `200` response is an `application/json` `Order`, `Order` carries a check, and its document checks responses
 - **THEN** its forwarder binds `wireOpenAPIOutput`, checks the `.ok` JSON body against `schema_Order`, and returns it only when nothing failed
 
 Pinned by: `.github/workflows/build.yml` (probe `badResponse`).
