@@ -30,8 +30,8 @@ Pinned by: nothing yet.
 For `openapi:` values `3.1.0`, `3.1.1`, `3.1.2` and `3.2.0`, WireOpenAPIGen SHALL decode the
 document directly as an `OpenAPIKit.OpenAPI.Document`.
 
-#### Scenario: the fixture's documents
-- **WHEN** the Tasks and Orders documents declare `openapi: 3.1.0`
+#### Scenario: two 3.1.0 documents in one app
+- **WHEN** an app's own document and a dependency's document, each implemented by an `@OpenAPIController`, both declare `openapi: 3.1.0`
 - **THEN** both are read and their operations are served
 
 Pinned by: `Fixtures/Sources/WireOpenAPIBootstrapExample/openapi.yaml`, `Fixtures/Sources/OrdersAPI/openapi.yaml` (built and probed by the `Fixtures` job in `.github/workflows/build.yml`), `Sources/DiagnosticGoldenTool/diagnostics-golden.txt` (every case's document is `openapi: 3.1.0`).
@@ -76,7 +76,7 @@ chain of component-to-component references to a concrete value and reports a cyc
 unresolvable. It SHALL NOT dereference the document as a whole.
 
 #### Scenario: a parameter declared by reference
-- **WHEN** `summariseTask` declares its path parameter as `{ $ref: '#/components/parameters/TaskId' }` and the handler binds `@Path id: String`
+- **WHEN** `summariseTask`, declared at `GET /tasks/{id}/summary` under the server `/api/v1`, declares its path parameter as `{ $ref: '#/components/parameters/TaskId' }`, `TaskId` is `{ name: id, in: path, required: true, schema: { type: string } }`, and the handler binds `@Path id: String`
 - **THEN** the binding is accepted as a declared path parameter, and `GET /api/v1/tasks/9/summary` is served
 
 Pinned by: `Fixtures/Sources/WireOpenAPIBootstrapExample/openapi.yaml` (`summariseTask`), `Fixtures/Sources/WireOpenAPIBootstrapExample/Controllers.swift` (`summariseTask`), `.github/workflows/build.yml` (`Fixtures` job, `Build` step, and the `typed` assertion of step `Serve an OpenAPI operation and a @Get route from one router`). Following a chain of component references, and reporting a cycle among them, is pinned by nothing yet.
@@ -107,12 +107,12 @@ all SHALL fail with
 and exit status 1.
 
 #### Scenario: a recursive component schema
-- **WHEN** the Tasks document's `Task` declares `subtasks: { type: array, items: { $ref: '#/components/schemas/Task' } }`
-- **THEN** the fixture builds, and a `POST /api/v1/tasks/new` whose second subtask has an empty title answers `422` with `"message":"rejected: body.subtasks[1].title"`
+- **WHEN** the Tasks document's `Task` declares `title: { type: string, minLength: 1 }` and `subtasks: { type: array, items: { $ref: '#/components/schemas/Task' } }`, and `createTask` (`POST /api/v1/tasks/new`) takes a `Task` body and maps `WireOpenAPIRequestValidationError` to its documented `422`
+- **THEN** the target builds, and a `POST /api/v1/tasks/new` whose second subtask has an empty title answers `422` through that mapping, with a failure at the path `body.subtasks[1].title`
 
 #### Scenario: a recursive schema in a dependency's document
-- **WHEN** the Orders document's `Order` declares a `relatedOrders` array of `Order`
-- **THEN** the fixture builds
+- **WHEN** the Orders document's `Order` declares a `relatedOrders` array of `Order`, and an app depends on the module owning that document
+- **THEN** the app builds
 
 Pinned by: `Fixtures/Sources/WireOpenAPIBootstrapExample/openapi.yaml` (`Task.subtasks`), `Fixtures/Sources/OrdersAPI/openapi.yaml` (`relatedOrders`), `.github/workflows/build.yml` (`Fixtures` job, `Build` step, and the `assertNested` probe). The handling of a name with no matching component, and the `cannot name` diagnostic, are pinned by nothing yet.
 
@@ -165,7 +165,7 @@ When an operation declares a `requestBody`, WireOpenAPIGen SHALL read its `requi
 content-type keys sorted, and the assertions of its `application/json` schema only.
 
 #### Scenario: an optional body
-- **WHEN** `replaceTask` declares a `requestBody` without `required: true`
+- **WHEN** `replaceTask`, declared as `POST /tasks/{id}/replace` with a required `title` query parameter under the server `/api/v1`, declares a `requestBody` without `required: true`
 - **THEN** the body is read as not required, and `POST /api/v1/tasks/9/replace?title=renamed` with and without a body are both served
 
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, the `replaced` and `replacedBare` assertions).
