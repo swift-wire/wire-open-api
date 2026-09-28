@@ -21,8 +21,8 @@ Documentation: [Operations](../../../Sources/WireOpenAPI/WireOpenAPI.docc/Operat
 decided by WireOpenAPIGen reading the source, not by the macro.
 
 #### Scenario: a marked method compiles unchanged
-- **WHEN** `TaskListController` declares `@RawOperation func listTasks(_ input: Operations.ListTasks.Input) async throws -> Operations.ListTasks.Output`
-- **THEN** the fixture builds with the method as written, and `GET /api/v1/tasks` answers `200` with a body containing `"3"`
+- **WHEN** `TaskListController` declares `@RawOperation func listTasks(_ input: Operations.ListTasks.Input) async throws -> Operations.ListTasks.Output`, implementing `listTasks` (`GET /api/v1/tasks`) by answering `.ok` with the JSON array `["1", "2", "3"]`
+- **THEN** the target builds with the method as written, and `GET /api/v1/tasks` answers `200` with a body containing `"3"`
 
 Pinned by: `Sources/WireOpenAPI/OpenAPIController.swift` (the macro declarations), `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `list` assertion), `Tests/WireOpenAPIMacrosTests/OpenAPIControllerMacroTests.swift` (`testMarkerExpandsToNothing`, which pins that `OpenAPIControllerMacro` expands to nothing when attached as `@OpenAPIController` to a struct). No test attaches an operation marker to a method, so the empty expansion of the markers themselves is pinned by nothing yet.
 
@@ -31,12 +31,12 @@ Pinned by: `Sources/WireOpenAPI/OpenAPIController.swift` (the macro declarations
 `@RawOperation(_:)` or `@Operation(_:)` when one is given, and from the method's own name otherwise.
 
 #### Scenario: the bare form
-- **WHEN** `TaskController` declares a bare `@RawOperation func getTask(_ input: Operations.GetTask.Input)`
+- **WHEN** `TaskController` declares a bare `@RawOperation func getTask(_ input: Operations.GetTask.Input)`, the document declares `getTask` as `GET /api/v1/tasks/{id}`, and the method answers `.ok` with a `Task` titled `task-<id> via <request path>`
 - **THEN** it implements operationId `getTask`, and `GET /api/v1/tasks/42` answers `200` with a title of `task-42 via /api/v1/tasks/42`
 
 #### Scenario: the declared form
 - **WHEN** a controller declares `@RawOperation("get-task") func fetch(_ input: Operations.get_hyphen_task.Input) async throws -> Operations.get_hyphen_task.Output` under the `defensive` strategy, against a document declaring `get-task`
-- **THEN** `diagnoseCoverage` counts operationId `get-task` as implemented by `fetch`
+- **THEN** `get-task` counts as implemented by `fetch`, so it is not named by the every-operation-implemented error
 
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `openapi` assertion). The declared form is pinned by nothing yet.
 
@@ -73,7 +73,7 @@ Otherwise WireOpenAPIGen SHALL write
 at the method name's line and exit with status 1.
 
 #### Scenario: types written qualified
-- **WHEN** `OrderSummaryController` declares `@RawOperation func listOrders(_ input: OrdersAPI.Operations.ListOrders.Input) async throws -> OrdersAPI.Operations.ListOrders.Output`
+- **WHEN** `OrderSummaryController` declares `@RawOperation func listOrders(_ input: OrdersAPI.Operations.ListOrders.Input) async throws -> OrdersAPI.Operations.ListOrders.Output`, implementing `listOrders` (`GET /api/v2/orders`) by answering `.ok` with `["item-7", "item-9"]`
 - **THEN** the forwarder is declared with those spellings, and `GET /api/v2/orders` answers `200` with a body containing `"item-7"` and `"item-9"`
 
 #### Scenario: a raw method with no return
@@ -103,7 +103,7 @@ literal argument when given and the parameter's own name otherwise. The forwarde
 `GeneratorSafeNames.swiftMemberName(for: documentedName, strategy:)`.
 
 #### Scenario: all three locations under renamed parameters
-- **WHEN** `summariseTask(@Path id: String, @Query("include-done") includeDone: Bool?, @Header("X-Request-Id") requestID: String?)` is called with `GET /api/v1/tasks/9/summary?include-done=true` and `X-Request-Id: abc123`
+- **WHEN** `summariseTask(@Path id: String, @Query("include-done") includeDone: Bool?, @Header("X-Request-Id") requestID: String?)`, declared at `GET /api/v1/tasks/{id}/summary`, returns a `Task` titled `summary of task-<id> done=<includeDone ?? false> req=<requestID ?? "-">` and is called with `GET /api/v1/tasks/9/summary?include-done=true` and `X-Request-Id: abc123`
 - **THEN** the response is `200` with title `summary of task-9 done=true req=abc123`
 
 #### Scenario: absent optionals
@@ -156,7 +156,7 @@ and the second with
 with status 1.
 
 #### Scenario: a required body decoded into the handler
-- **WHEN** `createTask(@Query("title") title: String, @JSONBody draft: Components.Schemas.Task)` is called with `POST /api/v1/tasks/new?title=hello` and body `{"id":"from-body","title":"x"}`
+- **WHEN** `createTask(@Query("title") title: String, @JSONBody draft: Components.Schemas.Task)`, declared at `POST /api/v1/tasks/new` with a required JSON `requestBody` and `201` as its only success, returns `Task(id: draft.id, title: title)` and is called with `POST /api/v1/tasks/new?title=hello` and body `{"id":"from-body","title":"x"}`
 - **THEN** the response is `201` with `"id":"from-body"` and `"title":"hello"`
 
 #### Scenario: a body the handler forgot
@@ -187,7 +187,7 @@ The forwarder SHALL unwrap `input.body` with a `switch` whose `.json` case yield
 `.none` case yielding `nil` for an optional body.
 
 #### Scenario: an optional body present
-- **WHEN** `replaceTask(@Path id: String, @Query("title") title: String, @JSONBody draft: Components.Schemas.Task?)` is called with body `{"id":"B9","title":"x"}` and `title=renamed`
+- **WHEN** `replaceTask(@Path id: String, @Query("title") title: String, @JSONBody draft: Components.Schemas.Task?)`, declared at `POST /api/v1/tasks/{id}/replace` with an optional `requestBody` and carrying `@JSONResponse(status: .created)`, returns a `Task` titled `<title> from <draft?.id ?? "nothing">` and is called with body `{"id":"B9","title":"x"}` and `title=renamed`
 - **THEN** the response is `201` with title `renamed from B9`
 
 #### Scenario: an optional body absent
@@ -208,12 +208,12 @@ The message SHALL say `@JSONResponse(status:)` whichever of the two annotations 
 which is tracked as a defect in https://github.com/swift-wire/wire-open-api/issues/89.
 
 #### Scenario: a non-200 success inferred
-- **WHEN** `createTask` names no status and its document declares only `201` among its successes
-- **THEN** the forwarder returns `.created(.init(body: .json(…)))` and the `created` probe answers `201`
+- **WHEN** `createTask` (`POST /api/v1/tasks/new`) names no status and its document declares only `201` among its successes
+- **THEN** the forwarder returns `.created(.init(body: .json(…)))`, and a valid `POST /api/v1/tasks/new` answers `201`
 
 #### Scenario: one of two successes named
-- **WHEN** `replaceTask` documents `200` and `201` and carries `@JSONResponse(status: .created)`
-- **THEN** the `replaced` probe answers `201`
+- **WHEN** `replaceTask` (`POST /api/v1/tasks/{id}/replace`) documents `200` and `201` and carries `@JSONResponse(status: .created)`
+- **THEN** `POST /api/v1/tasks/9/replace?title=renamed` answers `201`
 
 #### Scenario: two successes and no name
 - **WHEN** `replaceTask` loses its `@JSONResponse(status: .created)`
@@ -229,7 +229,7 @@ and `@ResponseStatus(_:)` on a handler with a return type with
 A handler with no return type SHALL be answered with `.<case>(.init())`.
 
 #### Scenario: a no-content response chosen by `@ResponseStatus`
-- **WHEN** `@Operation @ResponseStatus(.noContent) func deleteTask(@Path id: String) async throws` implements an operation documenting `202` and `204` with no content, and `POST /api/v1/tasks/7/delete` is sent
+- **WHEN** `@Operation @ResponseStatus(.noContent) func deleteTask(@Path id: String) async throws`, whose body logs `deleted: <id>`, implements an operation declared at `POST /api/v1/tasks/{id}/delete` documenting `202` and `204` with no content, and `POST /api/v1/tasks/7/delete` is sent
 - **THEN** the response is `204` with an empty body, and the log carries `deleted: 7`
 
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `deleted` assertion and the `deleted: 7` log check). The diagnostics are pinned by nothing yet.
@@ -258,8 +258,8 @@ for that document, and SHALL use `GeneratorNamingStrategy.generatorDefault`, whi
 when no config is passed, the key is absent, or its value is not a known strategy.
 
 #### Scenario: the idiomatic strategy
-- **WHEN** the fixture's config declares `namingStrategy: idiomatic` and a handler binds `@Header("X-Request-Id")`
-- **THEN** the forwarder reads `input.headers.xRequestId`, and the `typed` probe echoes `req=abc123`
+- **WHEN** the document's config declares `namingStrategy: idiomatic` and `summariseTask` binds `@Header("X-Request-Id") requestID: String?`
+- **THEN** the forwarder reads `input.headers.xRequestId`, and a request carrying `X-Request-Id: abc123` reaches the handler with `requestID` equal to `abc123`
 
 #### Scenario: no strategy declared
 - **WHEN** the config omits `namingStrategy`
@@ -279,7 +279,7 @@ per-request conformer SHALL fill the worker field from `wireOpenAPIEntry.<field>
 
 #### Scenario: a worker beside a documented parameter
 - **WHEN** `TaskController` declares `@Operation @ErrorResponse(TaskForbidden.self, .forbidden) func authorizedTask(@Path id: String, @AuthorizedTask("read") task: Components.Schemas.Task)` and `AuthorizedTask` carries `@RequestBinding(TaskAuthorizer.self)`
-- **THEN** the forwarder calls `bind(name: "read", …)` on `_wireWorker_TaskAuthorizer`, the per-request conformer fills it from `wireOpenAPIEntry.taskAuthorizer`, and the fixture builds
+- **THEN** the forwarder calls `bind(name: "read", …)` on `_wireWorker_TaskAuthorizer`, the per-request conformer fills it from `wireOpenAPIEntry.taskAuthorizer`, and the target builds
 
 Pinned by: `Fixtures/Sources/WireOpenAPIBootstrapExample/Controllers.swift` (`authorizedTask`), `Fixtures/Sources/WireOpenAPIBootstrapExample/AuthorizedTaskBinding.swift` (built by the `Build` step of the `Fixtures` job in `.github/workflows/build.yml`). No probe calls `authorizedTask` at runtime.
 
@@ -294,7 +294,7 @@ and a controller on a different seed with
 Each SHALL exit with status 1.
 
 #### Scenario: the worker on an app-scoped controller
-- **WHEN** `authorizedTask(@Path id: String, @AuthorizedTask("read") task: Components.Schemas.Task)` is declared on a `@Singleton @OpenAPIController() struct PlainController` carrying no `@ErrorResponse`
+- **WHEN** `authorizedTask(@Path id: String, @AuthorizedTask("read") task: Components.Schemas.Task)` is declared on a `@Singleton @OpenAPIController() struct PlainController` carrying no `@ErrorResponse`, where `AuthorizedTask` carries `@RequestBinding(TaskAuthorizer.self)` and `TaskAuthorizer` is `@Scoped(seed: HTTPRequest.self)`
 - **THEN** the generator exits 1 with `error: @Operation 'authorizedTask' binds 'task' through 'TaskAuthorizer', which is bound in @Scoped(seed: HTTPRequest.self) — but 'PlainController' is not scoped, so it is held directly and enters no scope, and there is nothing to construct 'TaskAuthorizer' in. Mark 'PlainController' @Scoped(seed: HTTPRequest.self).`
 
 Pinned by: nothing yet.
@@ -306,7 +306,7 @@ no marked method in the group implements, sorted, and when any remain SHALL writ
 and exit with status 1.
 
 #### Scenario: one operation left out
-- **WHEN** `GatedTaskController` is removed from the fixture, leaving `gatedTask` unimplemented
+- **WHEN** the document declares `gatedTask` and no marked method in the group implements it, while every other operation it declares is implemented
 - **THEN** the generator exits 1 with `error: every operation the document declares must be implemented, and gatedTask is not. Mark the method that implements it with @Operation or @RawOperation.`
 
 Pinned by: nothing yet.
@@ -320,7 +320,7 @@ reaches this check: `diagnoseCoverage` refuses it first with
 which is tracked as a defect in https://github.com/swift-wire/wire-open-api/issues/88.
 
 #### Scenario: a misspelt method
-- **WHEN** a controller declares `@RawOperation func getTasks(_ input: Operations.GetTasks.Input) async throws -> Operations.GetTasks.Output` against the fixture's Tasks document
+- **WHEN** a controller declares `@RawOperation func getTasks(_ input: Operations.GetTasks.Input) async throws -> Operations.GetTasks.Output` against a document whose operationIds are `getTask`, `authorizedTask`, `gatedTask`, `listTasks`, `summariseTask`, `createTask`, `deleteTask` and `replaceTask`
 - **THEN** the generator exits 1 with `error: 'getTasks' is marked as operation 'getTasks', which the document does not declare. It declares 'authorizedTask', 'createTask', 'deleteTask', 'gatedTask', 'getTask', 'listTasks', 'replaceTask', 'summariseTask'.`
 
 Pinned by: nothing yet.
@@ -346,8 +346,8 @@ line of the operation's method where one is in hand and the controller's line ot
 files, the location of a refusal for a method outside that file pairs the method's line with the
 wrong file, which is tracked as a defect in https://github.com/swift-wire/wire-open-api/issues/87.
 
-#### Scenario: the fixture compiles clean
-- **WHEN** the `Fixtures` package is built with every controller as checked in
+#### Scenario: a group with nothing to refuse
+- **WHEN** every operation a document declares is implemented by exactly one marked method whose form, bindings, body and status agree with the document
 - **THEN** WireOpenAPIGen writes no diagnostic and the build succeeds
 
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, `Build` step), `Sources/DiagnosticGoldenTool/diagnostics-golden.txt` (the shared `<file>:<line>: error:` shape, for the error-mapping refusals it holds).
