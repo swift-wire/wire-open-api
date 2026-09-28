@@ -134,8 +134,8 @@ status for which no case is found SHALL fail the tool with
 `the generator emitted no Output case for status <N>`.
 
 #### Scenario: the table's length
-- **WHEN** the unit tests load `status-golden.tsv`
-- **THEN** it holds exactly 500 rows
+- **WHEN** `NamingGoldenTool` has written `status-golden.tsv`
+- **THEN** it holds exactly 500 rows, one per status from `100` to `599`
 
 Pinned by: `Tests/WireOpenAPINamingTests/GeneratorSafeNamesTests.swift` (`statusTableLoaded`) for the row count, and `.github/workflows/build.yml` (`Fixtures` job, step `Check the naming golden table against the real generator`) for the table's content coming from the generator.
 
