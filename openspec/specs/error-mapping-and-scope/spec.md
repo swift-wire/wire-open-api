@@ -170,7 +170,7 @@ controller-scope mappings, dropping any later mapping of an error type already m
 mapping wins over a controller-scope mapping of the same type.
 
 #### Scenario: the same error at both scopes
-- **WHEN** `TaskListController` maps `NoSuchTask` to `.internalServerError` and its `summariseTask` maps `NoSuchTask` to `.notFound`
+- **WHEN** `TaskListController` maps `NoSuchTask` to `.internalServerError`, its `summariseTask` (`GET /api/v1/tasks/{id}/summary`) maps `NoSuchTask` to `.notFound`, its `deleteTask` (`POST /api/v1/tasks/{id}/delete`) maps nothing and documents a 500, and both handlers throw `NoSuchTask` for the id `missing`
 - **THEN** `GET /api/v1/tasks/missing/summary` answers `404`, and `POST /api/v1/tasks/missing/delete`, whose operation does not map it, answers `500`
 
 Pinned by: `.github/workflows/build.yml` (probes `mappedDocumented`, `mappedController`).
@@ -196,11 +196,11 @@ against the same mappings and otherwise its own 422 answer; then any `HTTPRespon
 conformance, which is how `ServerError` answers; and otherwise it SHALL rethrow.
 
 #### Scenario: malformed JSON on an operation mapping the validation error
-- **WHEN** `POST /api/v1/tasks/new?title=x` sends `Content-Type: application/json` with the body `not json`
+- **WHEN** `createTask` (`POST /api/v1/tasks/new`) requires an `application/json` body and maps `WireOpenAPIRequestValidationError` to its documented 422, and `POST /api/v1/tasks/new?title=x` sends `Content-Type: application/json` with the body `not json`
 - **THEN** the answer is `422`
 
 #### Scenario: a missing body and a wrong content type
-- **WHEN** `POST /api/v1/tasks/new?title=hello` sends no body, and separately sends `Content-Type: text/plain`
+- **WHEN** `createTask` (`POST /api/v1/tasks/new`) requires an `application/json` body, and `POST /api/v1/tasks/new?title=hello` sends no body, and separately sends `Content-Type: text/plain`
 - **THEN** the answers are `400` and `415`
 
 Pinned by: `.github/workflows/build.yml` (probes `mappedDecode`, `mappedDecodeInside`, `missingBody`, `wrongType`).
@@ -227,11 +227,11 @@ with a closure built from the controller-scope mappings only. `refuse` SHALL try
 no controller-scope mappings SHALL enter the scope with a plain `try await`.
 
 #### Scenario: a binding that throws while the scope is built
-- **WHEN** `GatedTaskController` injects `RequestGate`, whose `init(seed:)` throws `Unauthenticated` without an `x-user` header, and `GET /api/v1/tasks/42/gated` arrives without one
+- **WHEN** the `@Scoped(seed: HTTPRequest.self)` `GatedTaskController` implements `gatedTask` (`GET /api/v1/tasks/{id}/gated`), maps `Unauthenticated` at controller scope with `{ _ in Components.Schemas.Problem(message: "no user") }`, and injects `RequestGate`, whose `init(seed:)` throws `Unauthenticated` without an `x-user` header; an app-wide `@Middleware` adds `x-served-by: wire-open-api` to every response; and `GET /api/v1/tasks/42/gated` arrives without an `x-user` header
 - **THEN** the answer is `401` with `"message":"no user"` and the global middleware's `x-served-by: wire-open-api` header
 
 #### Scenario: the same operation with the header
-- **WHEN** the request carries `x-user: ada`
+- **WHEN** the request carries `x-user: ada`, and `gatedTask`'s handler answers a `Task` titled `task-<id> for <RequestGate.user>`
 - **THEN** the answer is `200` with `"title":"task-42 for ada"`
 
 Pinned by: `.github/workflows/build.yml` (probes `gated`, `gatedOK`, `gatedServedBy`).
