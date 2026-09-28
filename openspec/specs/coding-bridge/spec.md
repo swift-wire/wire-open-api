@@ -20,7 +20,7 @@ Rationale: [WireOpenAPIAdvanced](../../../Documentation/Notes/WireOpenAPIAdvance
 and `.prettyPrinted` when `coding.json.prettyPrints` is true, and nothing else.
 
 #### Scenario: an app that asks for sorted keys
-- **WHEN** the composition root provides `WireMVCCoding(json: .init(sortsKeys: true))` and selects it with `@Coding(WireMVCCoding.self)`
+- **WHEN** the composition root provides `WireMVCCoding(json: .init(sortsKeys: true))` and selects it with `@Coding(WireMVCCoding.self)`, and an OpenAPI operation served at `GET /api/v1/tasks/{id}` returns a JSON object with the properties `id`, `title` and `at`
 - **THEN** `GET /api/v1/tasks/42` answers a body whose keys arrive in the order `at`, `id`, `title`
 
 Pinned by: `.github/workflows/build.yml` (job "Fixtures — serve and probe", step "Serve an OpenAPI operation and a @Get route from one router", assertion "the app-wide sortsKeys did not reach the OpenAPI operation") for the `sortsKeys` to `.sortedKeys` mapping only. The `escapesSlashes` to `.withoutEscapingSlashes` and `prettyPrints` to `.prettyPrinted` mappings are pinned by nothing yet.
@@ -34,7 +34,7 @@ and `decode(_:)` forward to `coding.dates`.
 - **THEN** its `dateTranscoder.encode(Date(timeIntervalSince1970: 1_700_000_000))` returns `"1700000000"`, and its `dateTranscoder.decode("1700000000")` returns that same instant
 
 #### Scenario: one instant, two kinds of route, under the default transcoder
-- **WHEN** an OpenAPI operation and a WireMVC `@Get` route in the same app each return `Date(timeIntervalSince1970: 1_700_000_000)` under an app-wide coding whose `dates` is left at its ISO8601 default
+- **WHEN** an OpenAPI operation and a WireMVC `@Get` route in the same app each return `Date(timeIntervalSince1970: 1_700_000_000)` as the property `at` under an app-wide coding whose `dates` is left at its ISO8601 default
 - **THEN** both bodies contain `"at":"2023-11-14T22:13:20Z"`
 
 Pinned by: nothing yet. The forwarding to `coding.dates` is measured by no test. The two-route agreement is observed by `.github/workflows/build.yml` (assertions "the OpenAPI operation did not write the fixture date as ISO8601", "the WireMVC route did not write the same instant the same way"), but swift-openapi-runtime's own default `dateTranscoder` is also `.iso8601`, so those assertions would pass without the forwarding.
@@ -58,7 +58,7 @@ The route contributor WireOpenAPIGen generates SHALL build every operation's `Co
 WireMVC `@Controller` does not reach OpenAPI operations.
 
 #### Scenario: an epoch override beside an OpenAPI operation
-- **WHEN** `EpochController` is `@Coding(WireMVCCoding.epoch)`, a keyed coding writing epoch seconds, and the app-wide coding writes ISO8601
+- **WHEN** `EpochController` is `@Coding(WireMVCCoding.epoch)`, a keyed coding writing epoch seconds, the app-wide coding writes ISO8601, and an OpenAPI operation served at `GET /api/v1/tasks/{id}` returns `Date(timeIntervalSince1970: 1_700_000_000)` as the property `at`
 - **THEN** `GET /api/v1/tasks/42` still contains `"at":"2023-11-14T22:13:20Z"`
 
 Pinned by: `.github/workflows/build.yml` (assertion "the OpenAPI operation did not write the fixture date as ISO8601"). That the override applies to `EpochController`'s own routes and not to other WireMVC controllers is wire-mvc's behaviour, specified in wire-mvc's controllers-and-routes.
