@@ -22,6 +22,22 @@ jobs:
         run: swift build
       - name: Test
         run: swift test
+  # Optimised builds link differently from debug ones: a debug build compiles with testing enabled, which
+  # gives every internal symbol external visibility, so a reference from one module to another's internal
+  # symbol links there and fails only here. Nothing else in CI builds with optimisation, so this job is the
+  # only place that class shows up (swift-wire/wire-mvc#251). Tests are not built: `@testable` would turn
+  # testing back on.
+  ReleaseBuild:
+    name: Release build (pinned)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: swift-wire/setup-swift@v1
+      - name: Build the package, optimised
+        run: swift build -c release
+      - name: Build the fixtures, optimised
+        working-directory: Fixtures
+        run: swift build -c release
   Fixtures:
     name: Fixtures — serve and probe
     runs-on: ubuntu-24.04
