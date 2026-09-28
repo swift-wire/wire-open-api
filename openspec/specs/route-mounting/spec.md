@@ -24,7 +24,7 @@ constrained by `Builder.RequestContext: ~Copyable & SendableMetatype & ResponseH
 each preceded by its conformer namespace.
 
 #### Scenario: two documents in one app
-- **WHEN** the fixture app holds the `OrdersAPI` group and the `WireOpenAPIBootstrapExample` group
+- **WHEN** the app `WireOpenAPIBootstrapExample` holds the `OrdersAPI` group, for a dependency's document, and the `WireOpenAPIBootstrapExample` group, for its own
 - **THEN** `_WireOpenAPIHandlers.swift` declares `enum _WireOpenAPISpec_OrdersAPI` and `extension _WireOpenAPIContributor_OrdersAPI: RouteContributor` before `enum _WireOpenAPISpec_WireOpenAPIBootstrapExample` and `extension _WireOpenAPIContributor_WireOpenAPIBootstrapExample: RouteContributor`, and both documents' operations serve
 
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, `Build` step, and the `openapi` and `order` assertions of step `Serve an OpenAPI operation and a @Get route from one router`), which pin that both groups compile and serve. The ascending emission order is pinned by nothing yet.
@@ -50,7 +50,7 @@ every operation of the document. The template conformer SHALL hold each app-scop
 the proxy's subject field and `nil` for each request-scoped one.
 
 #### Scenario: the app's coding reaches an operation
-- **WHEN** the fixture's composition root declares `WireMVCCoding(json: .init(sortsKeys: true))` and a client requests `GET /api/v1/tasks/42`
+- **WHEN** the composition root declares `WireMVCCoding(json: .init(sortsKeys: true))`, the operation at `GET /api/v1/tasks/{id}` answers an object with `id` set to the path's id, a `title`, and `at` set to `Date(timeIntervalSince1970: 1_700_000_000)`, and a client requests `GET /api/v1/tasks/42`
 - **THEN** the body begins `{"at":` and lists `"id":"42"` before `"title":`, and `"at"` is `"2023-11-14T22:13:20Z"`
 
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `the app-wide sortsKeys did not reach the OpenAPI operation` and ISO8601 checks).
@@ -61,7 +61,7 @@ When the document declares servers whose URL paths are all equal, the template S
 compiling target's own document and `<M>.Servers` for a document in module `M`.
 
 #### Scenario: a document in a dependency module
-- **WHEN** `OrdersAPI`'s document declares `servers: [{url: /api/v2}]`
+- **WHEN** `OrdersAPI`'s document declares `servers: [{url: /api/v2}]` and `getOrder` at `/orders/{id}`, whose handler answers an `Order` with `item` set to `item-<id> via <request path>`
 - **THEN** the template is built with `serverURL: try OrdersAPI.Servers.Server1.url()`, and `GET /api/v2/orders/7` answers `200` with `"item":"item-7 via /api/v2/orders/7"`
 
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `order` assertion).
@@ -99,7 +99,7 @@ lower-cased.
 - **THEN** `GET /api/v1/tasks/42` answers `200` and `GET /tasks/42` answers `404`
 
 #### Scenario: each document keeps its own prefix
-- **WHEN** the Orders document is under `/api/v2` and the Tasks document under `/api/v1`
+- **WHEN** the Orders document declares `/orders/{id}` under `/api/v2` and the Tasks document declares `/tasks` under `/api/v1`, and neither declares the other's paths
 - **THEN** `GET /api/v1/orders/7` answers `404` and `GET /api/v2/tasks` answers `404`
 
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `openapi`, `unprefixed`, `crossed` and `crossed2` assertions).
@@ -109,7 +109,7 @@ The witness SHALL register on the builder `WireMVC.apply` passes it, so an opera
 same router, `@NotFound` fallback and global `@Middleware` as a wire-mvc `@Get` route.
 
 #### Scenario: one router
-- **WHEN** the fixture serves `GET /api/v1/tasks/42`, `GET /status/tasks` and `GET /nope`
+- **WHEN** an app serves an operation at `GET /api/v1/tasks/{id}`, a `@Controller("/status")` with `@Get("/tasks")`, and a `@NotFound` fallback answering `no route here`, and receives `GET /api/v1/tasks/42`, `GET /status/tasks` and `GET /nope`
 - **THEN** the first two answer `200`, and `/nope` answers `404` with the `@NotFound` body `no route here`
 
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `openapi`, `mvc` and `notfound` assertions).
@@ -125,11 +125,11 @@ headers, and run it through `wireCompose { … }` whose entries are the declarin
 with `<key>` sanitised by `sanitizedKeyFragment`. A registration with no entries SHALL build no box.
 
 #### Scenario: controller scope and route scope
-- **WHEN** `TaskController` carries `@Middleware(RequireAPIKeyKeys.factory)` and `listTasks` on `TaskListController` carries `@Middleware(AuditKeys.factory)`
+- **WHEN** `TaskController`, implementing `getTask` at `GET /api/v1/tasks/{id}`, carries `@Middleware(RequireAPIKeyKeys.factory)`, and `listTasks` (`GET /api/v1/tasks`) on `TaskListController` carries `@Middleware(AuditKeys.factory)`, where `RequireAPIKey` logs `apikey: <method> <path>` for each request it folds around and `Audit` logs `audit: <path>`
 - **THEN** the log shows `apikey: GET /api/v1/tasks/42` and `audit: /api/v1/tasks`, and no `audit: /api/v1/tasks/42`
 
 #### Scenario: one component on both kinds of route
-- **WHEN** `StatusController` carries the same `@Middleware(RequireAPIKeyKeys.factory)` on a `@Get`
+- **WHEN** `StatusController`, a `@Controller("/status")` with a `@Get("/tasks")` route, carries the same `@Middleware(RequireAPIKeyKeys.factory)`
 - **THEN** the log shows `apikey: GET /status/tasks` as well
 
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `middleware log` checks), which pin that each scope's entries apply. The controller-before-method order is pinned by nothing yet: no fixture operation carries both scopes.
@@ -139,7 +139,7 @@ The fold for an operation SHALL include controller-scope entries only from the c
 implements that operation, not from other controllers in the group or in another group.
 
 #### Scenario: a sibling controller without middleware
-- **WHEN** `TaskController` declares `@Middleware(RequireAPIKeyKeys.factory)` and `TaskListController`, on the same document, declares none
+- **WHEN** `TaskController` declares `@Middleware(RequireAPIKeyKeys.factory)`, where `RequireAPIKey` logs `apikey: <method> <path>` for each request it folds around, `TaskListController`, on the same document, declares none and implements `listTasks` at `GET /api/v1/tasks`, and `OrderController`, on the Orders document, declares none and implements `getOrder` at `GET /api/v2/orders/{id}`
 - **THEN** no `apikey: GET /api/v1/tasks` line is logged, and no `apikey: GET /api/v2/orders/7` line is logged
 
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `controller-scope @Middleware leaked between controllers sharing a spec` and `@Middleware leaked from one spec to another` checks).
@@ -151,7 +151,7 @@ send SHALL be through `ResponseHeaderApplyingSender(wrapping: sender, registry: 
 so header contributions from middleware reach an operation's response.
 
 #### Scenario: a global middleware's header
-- **WHEN** a global `@Middleware` adds `x-served-by: wire-open-api`
+- **WHEN** a global `@Middleware` adds `x-served-by: wire-open-api`, the app serves an operation at `GET /api/v1/tasks/{id}` and a `@Get` route at `GET /status/tasks`, and `GET /api/v1/tasks/42/gated` is refused `401` by a controller-scope mapping when its controller's request scope fails to build
 - **THEN** `GET /api/v1/tasks/42`, `GET /status/tasks` and the `401` refusal of `GET /api/v1/tasks/42/gated` all carry `x-served-by: wire-open-api`
 
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `openapiServedBy`, `mvcServedBy` and `gatedServedBy` checks).
@@ -167,7 +167,7 @@ defect in https://github.com/swift-wire/wire-open-api/issues/63. `invoke` SHALL 
 `HTTPResponse` and body through the sender it was given.
 
 #### Scenario: a request-scoped operation
-- **WHEN** `GET /api/v1/tasks/42` is served
+- **WHEN** `GET /api/v1/tasks/42` is served by the request-scoped `TaskController`'s `getTask` method, which implements `getTask` at `GET /api/v1/tasks/{id}`
 - **THEN** the terminal calls `wireOpenAPIServer.getTask(request:body:metadata:)` inside `WireOpenAPIRoutes.invoke`, and the response is `200`
 
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `openapi` assertion).
@@ -190,7 +190,7 @@ When the implementing controller has no `@Scoped(seed:)`, the terminal SHALL bin
 in the group is request-scoped.
 
 #### Scenario: an app-scoped operation beside a scoped one
-- **WHEN** `GET /api/v1/tasks` is served by `TaskListController` and `GET /api/v2/orders` by `OrderSummaryController`
+- **WHEN** `GET /api/v1/tasks` is served by the app-scoped `TaskListController` and `GET /api/v2/orders` by the app-scoped `OrderSummaryController`, while their documents' request-scoped controllers, `TaskController` and `OrderController`, inject bindings whose construction logs `scope: constructed for <path>` and `scope: order trace for <path>`
 - **THEN** no `scope: constructed for /api/v1/tasks` and no `scope: order trace for /api/v2/orders` line is logged
 
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, both `an app-scoped controller's operation entered a request scope` checks).
@@ -204,11 +204,11 @@ the proxy and `nil` for every other request-scoped field, and dispatch through t
 NOT construct a new `UniversalServer` per request.
 
 #### Scenario: the subject follows the request
-- **WHEN** `GET /api/v1/tasks/42` and then `GET /api/v1/tasks/99` are served by the request-scoped `TaskController`
+- **WHEN** `GET /api/v1/tasks/42` and then `GET /api/v1/tasks/99` are served by the request-scoped `TaskController`, which injects a binding seeded from the request that logs `scope: constructed for <path>` and titles its answer `task-<id> via <that binding's path>`
 - **THEN** the responses carry `task-42 via /api/v1/tasks/42` and `task-99 via /api/v1/tasks/99`, and the log shows `scope: constructed for` each path
 
 #### Scenario: the second document's scope
-- **WHEN** `GET /api/v2/orders/7` and `/api/v2/orders/9` are served by the request-scoped `OrderController`
+- **WHEN** `GET /api/v2/orders/7` and `/api/v2/orders/9` are served by the request-scoped `OrderController`, which injects a binding seeded from the request that logs `scope: order trace for <path>` and answers an item naming the id and that binding's path
 - **THEN** each response carries its own id and path, and the log shows `scope: order trace for /api/v2/orders/7`
 
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `openapi`, `other`, `order` and `order2` assertions and the `scope log` checks).
@@ -232,7 +232,7 @@ document belongs to another module `M`, the namespace SHALL first declare
 target's own document it SHALL declare none.
 
 #### Scenario: two documents spelling their types identically
-- **WHEN** the app generates the Tasks document and imports `OrdersAPI`, and `OrderController` writes `Operations.GetOrder.Input` unqualified in its own module
+- **WHEN** the app generates the Tasks document, serving `getTask` at `GET /api/v1/tasks/{id}`, and imports `OrdersAPI`, whose `OrderController` serves `getOrder` at `GET /api/v2/orders/{id}` and writes `Operations.GetOrder.Input` unqualified in its own module
 - **THEN** the emitted `enum _WireOpenAPISpec_OrdersAPI` carries the four typealiases, `enum _WireOpenAPISpec_WireOpenAPIBootstrapExample` carries none, and both `GET /api/v2/orders/7` and `GET /api/v1/tasks/42` answer `200`
 
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, `Build` step, and the `order` and `openapi` assertions of step `Serve an OpenAPI operation and a @Get route from one router`).
