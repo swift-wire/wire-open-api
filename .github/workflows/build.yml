@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [ main ]
 
-# wire-open-api is swift-tools-version 6.4 and macOS 26: `WireOpenAPIMVC` mounts OpenAPI operations as
+# wire-open-api is swift-tools-version 6.4 and macOS 27: `WireOpenAPIMVC` mounts OpenAPI operations as
 # WireMVC routes, and wire-mvc is proposal-native. It therefore builds only on a Swift 6.4 toolchain.
 # Every job that needs a toolchain installs the one named in `.swift-version` through
 # swift-wire/setup-swift — a release today, but the same mechanism carries a pre-release snapshot when
@@ -521,11 +521,11 @@ jobs:
     # toolchain it was built for, so these two literals move together — and together with
     # `.swift-version`, since the cross-compile should check the toolchain the package is developed on.
     container:
-      image: swift:6.4.0-noble
+      image: swift:6.4.1-noble
     steps:
       - uses: actions/checkout@v6
       - name: Install Static Linux SDK
-        run: swift sdk install https://download.swift.org/swift-6.4.0-release/static-sdk/swift-6.4.0-RELEASE/swift-6.4.0-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz --checksum 47d2fd89eebfdf9eb4d536b6710414297f755c17926cdebc4742c08982b40a9e
+        run: swift sdk install https://download.swift.org/swift-6.4.1-release/static-sdk/swift-6.4.1-RELEASE/swift-6.4.1-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz --checksum cef5592d7430ed3c5ae1ddda479849c6f5252bd94a5723db1559f984caf38a7c
       - name: Cross-compile for ARM64 Linux
         run: swift build -c release --swift-sdk aarch64-swift-linux-musl
 

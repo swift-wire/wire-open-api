@@ -69,7 +69,7 @@ let wireOpenAPISettings: [SwiftSetting] = [
 
 let package = Package(
     name: "wire-open-api",
-    platforms: [.macOS(.v26)],
+    platforms: [.macOS(.v27)],
     products: [
         .library(name: "WireOpenAPI", targets: ["WireOpenAPI"]),
         // A consumer applies this INSTEAD of swift-wire's WireBuildPlugin: it runs WireGen for the graph
@@ -98,7 +98,7 @@ let package = Package(
         .package(url: "https://github.com/swiftlang/swift-docc-plugin", from: "1.4.0"),
         // An `@Operation` is collated as a WireMVC route — it contributes to
         // `WireMVCKeys.routeContributors` like a `@Get` does — so wire-mvc is a core dependency. It is
-        // proposal-native (tools 6.4, macOS 26), which is why this package is too.
+        // proposal-native (tools 6.4, macOS 27), which is why this package is too.
         // `ServerTransport` trait: serving the collated routes on Hummingbird/Vapor/Lambda goes through
         // `WireMVCServerTransport`, which the trait gates.
         .package(

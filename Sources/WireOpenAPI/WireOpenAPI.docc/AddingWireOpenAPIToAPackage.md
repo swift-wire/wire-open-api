@@ -52,5 +52,5 @@ document and its controllers live.
 
 ## Requirements
 
-A Swift 6.4 toolchain, macOS 26 or Linux, and the generator build named in
+A Swift 6.4 toolchain, macOS 27 or Linux, and the generator build named in
 [#50](https://github.com/swift-wire/wire-open-api/issues/50).
