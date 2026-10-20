@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [ main ]
 
-# wire-open-api is swift-tools-version 6.4 and macOS 26: `WireOpenAPIMVC` mounts OpenAPI operations as
+# wire-open-api is swift-tools-version 6.4 and macOS 27: `WireOpenAPIMVC` mounts OpenAPI operations as
 # WireMVC routes, and wire-mvc is proposal-native. It therefore builds only on a Swift 6.4 toolchain.
 # Every job that needs a toolchain installs the one named in `.swift-version` through
 # swift-wire/setup-swift — a release today, but the same mechanism carries a pre-release snapshot when

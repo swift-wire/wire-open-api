@@ -39,7 +39,7 @@ let proposalSettings: [SwiftSetting] =
 
 let package = Package(
     name: "wire-open-api-fixtures",
-    platforms: [.macOS(.v26)],
+    platforms: [.macOS(.v27)],
     dependencies: [
         .package(path: ".."),
         // Traits union across the graph: wire-open-api already asks for `ServerTransport`; the fixture

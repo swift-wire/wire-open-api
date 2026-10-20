@@ -72,7 +72,7 @@ struct TaskController: APIProtocol {
 }
 ```
 
-Requires a Swift 6.4 toolchain, and targets macOS 26 and Linux. The generator build it is
+Requires a Swift 6.4 toolchain, and targets macOS 27 and Linux. The generator build it is
 compiled against is tracked in
 [#50](https://github.com/swift-wire/wire-open-api/issues/50).
 

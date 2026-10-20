@@ -1,5 +1,5 @@
 {
-  "originHash" : "9ef75df590148538d7fdba5242176116a8fb7341777e42a7d77de01137f357cd",
+  "originHash" : "a4ccd6ebb35a866041efc2ab8c9b1bcf0c78faa0d3e167a451473a3be5f36586",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -124,7 +124,7 @@
       "location" : "https://github.com/swift-server/swift-http-server.git",
       "state" : {
         "branch" : "main",
-        "revision" : "b31b98d1a2dd6e2d25dcfe974b6d9788946f61cd"
+        "revision" : "d2a4723d47fc2d867f1ce0b9726d0c00548bb85d"
       }
     },
     {
@@ -267,7 +267,7 @@
       "location" : "https://github.com/swift-wire/swift-wire.git",
       "state" : {
         "branch" : "main",
-        "revision" : "351dc8f295899787ed5902672bfa6b6bfdd7f991"
+        "revision" : "e8d2cac00b89bed621833d1cbb104768c84c2e88"
       }
     },
     {
@@ -276,7 +276,7 @@
       "location" : "https://github.com/swift-wire/wire-mvc.git",
       "state" : {
         "branch" : "main",
-        "revision" : "abae22105076270043fd53b6aafe0f6677bde2d9"
+        "revision" : "183c467d531ab1fd258e8007a580b9ee0023dcc7"
       }
     },
     {
