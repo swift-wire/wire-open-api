@@ -191,6 +191,22 @@ struct SpecResponse {
     let contentTypes: [String]
     /// What the JSON schema of this response asserts — checked only when `wire-openapi.yaml` asks for it.
     let assertions: SpecAssertions
+    /// The headers it declares, in document order — which is the order the generated `Headers`
+    /// initialiser takes them in, so emission can name them positionally-correct without reading it.
+    var headers: [SpecResponseHeader] = []
+}
+
+/// One `headers:` entry of a response.
+struct SpecResponseHeader {
+    /// The name as the document writes it — what the generated member is named from, and what goes on
+    /// the wire.
+    let name: String
+    let isRequired: Bool
+    /// Whether the typed shim can build its generated member from a returned field's value: a plain
+    /// `string` schema, which the generator types `String`. A `format`, an `enum`, or any other type is
+    /// generated as something else (`Date`, an enum, `Int`), and converting a field value into it is a
+    /// decision this adapter does not make on the author's behalf.
+    let isPlainString: Bool
 }
 
 /// The `requestBody:` entry: whether it must be present, and what it can be.

@@ -231,7 +231,9 @@ final class ControllerScanner: SyntaxVisitor {
     private func typedOperation(_ operationID: String, _ function: FunctionDeclSyntax) -> DiscoveredOperation {
         // No return clause is not an error: it is how a documented no-content response is written. The
         // emitter checks that against the response it selects.
-        let returnType = function.signature.returnClause?.type.trimmedDescription
+        let shape = ResponseShape.read(function.signature.returnClause?.type, operationID: operationID) {
+            diagnose($0, at: function.name)
+        }
         var parameters: [BoundParameter] = []
         for parameter in function.signature.parameterClause.parameters {
             var binding: String?
@@ -287,7 +289,8 @@ final class ControllerScanner: SyntaxVisitor {
             inputType: nil,
             outputType: nil,
             parameters: parameters,
-            returnType: returnType,
+            returnType: shape.body,
+            responseShape: shape,
             isTyped: true,
             responseStatus: named?.status,
             statusAnnotation: named?.annotation,

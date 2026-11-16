@@ -69,6 +69,34 @@ rejected: Controller.swift:10: error: 'body' in the 200 response of 'opA' declar
 # the same document builds when nobody asked for the check — the other half of the rule
 accepted
 
+## tuple/status-with-one-success
+# a returned status chooses among documented successes, so one success leaves no choice
+rejected: Controller.swift:9: error: 'opA' returns its status in a response tuple, but documents only .ok, so there is nothing to choose between. Return the body alone, or document the other successes.
+
+## tuple/status-beside-an-annotation
+# a status returned and a status annotated contradict each other
+rejected: Controller.swift:10: error: 'opA' returns its status in a response tuple and also names one with @JSONResponse(status: .created). The two contradict each other — drop the annotation, or return the body alone.
+
+## tuple/successes-disagree-on-a-body
+# a tuple has one body element, so every success it can answer with must carry one
+rejected: Controller.swift:9: error: 'opA' returns its status in a response tuple with a body, but its documented 204 success carries none. Every success a response tuple can answer with has to agree on whether it carries a body — document them alike, or use @RawOperation.
+
+## tuple/header-the-shim-cannot-build
+# a returned field becomes a typed member, which only a plain string schema is built from
+rejected: Controller.swift:9: error: 'opA' returns header fields, but its 200 response declares 'X-Count' with a schema other than a plain string, which the typed shim cannot build from a field value. Use @RawOperation for this operation.
+
+## tuple/required-header-not-returned
+# a required header has to come from somewhere, and a handler returning no fields has none
+rejected: Controller.swift:9: error: 'opA' documents a 201 response with the required header 'Location', but its handler returns no header fields. Return (status:headers:body:) and set it.
+
+## tuple/not-a-response-shape
+# the labels are read in WireMVC's canonical order, and anything else is not a response tuple
+rejected: Controller.swift:9: error: the response tuple returned by @Operation 'opA' is labelled (body:status:), which is not a response shape — write one of (status:body:), (status:headers:body:), (status:headers:) or (headers:body:).
+
+## accepted/status-tuple-over-two-successes
+# the shape the tuple diagnostics point at: a status chosen among two documented successes
+accepted
+
 ## accepted/per-operation-forms-are-the-remedy-for-disagreement
 # each operation takes the form its own documented response requires
 accepted

@@ -29,8 +29,17 @@ struct DiscoveredOperation {
     /// `@Operation`: the parameters to bind and the response body type. Empty and nil for a raw one.
     let parameters: [BoundParameter]
     /// The response body's type, or nil when the handler returns nothing — which is how a documented
-    /// no-content response is written.
+    /// no-content response is written. For a response tuple, the type of its `body` element.
     let returnType: String?
+    /// What the return type says about the response beyond its body. Empty for a raw operation.
+    var responseShape = ResponseShape()
+    /// The handler returns a **response tuple** — WireMVC's labelled `(status:headers:body:)` or a subset
+    /// of it — rather than the body alone.
+    var isResponseTuple: Bool { responseShape.isTuple }
+    /// The tuple carries a `status`: the handler chooses, at run time, which documented success it is.
+    var returnsStatus: Bool { responseShape.status }
+    /// The tuple carries `headers`: the handler supplies the response's declared header fields.
+    var returnsHeaders: Bool { responseShape.headers }
     /// Whether this operation is bound by the typed shim rather than handed the generated `Input`.
     let isTyped: Bool
     /// The status named by `@JSONResponse(status:)` or `@ResponseStatus(_:)`, as written — `created`.

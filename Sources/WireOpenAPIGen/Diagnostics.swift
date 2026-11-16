@@ -194,7 +194,9 @@ extension DirectDispatchEmitter {
             for operation in controller.operations where operation.isTyped {
                 guard let route = operationRoutes[operation.operationID] else { continue }
                 let successes = route.responses.filter { (200..<300).contains($0.code) }
-                if let written = operation.responseStatus {
+                if operation.returnsStatus {
+                    diagnoseReturnedStatus(operation, successes: successes)
+                } else if let written = operation.responseStatus {
                     guard
                         route.responses.contains(where: {
                             GeneratorStatusNames.safeName(for: $0.code) == written
@@ -221,12 +223,14 @@ extension DirectDispatchEmitter {
                         '\(operation.operationID)' documents \(successes.isEmpty ? "no" : "\(successes.count)") \
                         success \(successes.count == 1 ? "response" : "responses")\
                         \(declared.isEmpty ? "" : " (\(declared))"), so which one the handler returns cannot \
-                        be inferred. Name it with @JSONResponse(status:) or @ResponseStatus(_:).
+                        be inferred. Name it with @JSONResponse(status:) or @ResponseStatus(_:), or return \
+                        (status:body:) to choose one per call.
                         """,
                         at: operation
                     )
                 }
                 diagnoseResponseShape(operation)
+                diagnoseResponseHeaders(operation)
             }
         }
     }
@@ -323,8 +327,9 @@ extension DirectDispatchEmitter {
                 at: operation
             )
         }
-        do {
-            let selected = selectedResponse(for: operation)
+        // Every response the handler can construct: one, or each documented success when it returns its
+        // status. A response tuple has one `body` element, so all of them must agree on carrying one.
+        for selected in candidateResponses(for: operation) {
             let hasBody = !selected.contentTypes.isEmpty
             if hasBody, selected.contentTypes != ["application/json"] {
                 fail(

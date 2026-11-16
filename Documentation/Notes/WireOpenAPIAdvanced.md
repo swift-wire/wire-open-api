@@ -509,6 +509,39 @@ from the document, and the handler is checked against it.
 `@JSONResponse(status:)` and `@ResponseStatus(_:)` name the response where the document declares more
 than one success — split on whether the handler returns a body, the same split WireMVC draws.
 
+**Choosing among them per call (#98).** A name fixes one status for every call, which is wrong for
+find-or-create (201 new, 200 found) and accepted-or-done (202, 200): the status is known only after the
+handler has run. Before this, such an operation had to be `@RawOperation` — media-silo's server carried
+nine of them for this reason alone, each re-implementing the body unwrap and every error mapping by hand.
+
+The answer is WireMVC's response tuple, `(status:headers:body:)` and its subsets, because one binding
+vocabulary for both authoring styles is the point of the shim and WireMVC already had the shape
+(swift-wire/wire-mvc#74). With a `status`, the forwarder switches on the code over the document's 2xx responses — one
+generated `Output` case each — and throws `WireOpenAPIUndocumentedResponse` for anything else.
+
+It meets the objection that keeps the closure form of `@ErrorResponse` out of operations — a status
+chosen from a value cannot be checked against the document — by splitting what is checked where. The
+*set* is the document's, and the build checks the handler against it: more than one success, all
+agreeing on a body, no annotation naming a status beside the tuple. The *value* is checked on every
+call, before anything is sent. Whether the successes' body schemas agree is left to the type checker:
+each case's `.json(…)` must accept the one `body` type, exactly as for a single response.
+
+Returned headers fill the chosen response's generated `Headers`. Two choices worth recording:
+
+- Only a plain `string` header schema is built from a field value. Anything else is generated as a
+  different type (`Date`, `Int`, an enum), and converting a field value into it is a decision the shim
+  would be making for the author; it is a build-time error instead.
+- A returned field the response does not declare is **refused**, not dropped. It cannot be refused at
+  build time — the fields are a value — and dropping it would make a header the handler plainly meant to
+  send vanish from the wire. Refusing it answers 500 on the first request that reaches it, which says the
+  document and the handler disagree.
+
+Both refusals and the undocumented status are the service breaking its own contract, so they share
+`WireOpenAPIResponseValidationError`'s treatment: 500, no body, rethrown past the forwarder's
+`@ErrorResponse` clauses, and skipped by the terminal's rejection closure — whose catch-all would
+otherwise answer them, since a catch-all is terminal-scoped. The terminal check covers response
+validation failures too, which had the same exposure (#91).
+
 ### Type-driven now, spec-driven validation next
 
 Type-driven emission derives `input.path.id` and `.ok(.init(body: .json(…)))` from the annotations and

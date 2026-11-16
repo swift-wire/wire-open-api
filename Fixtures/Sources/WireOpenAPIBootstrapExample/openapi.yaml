@@ -176,6 +176,53 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Task' }
+  # Find-or-create: the handler decides which success it is, so it returns its status in a response
+  # tuple and the shim switches over the two documented here. Each declares a header of its own, which
+  # the tuple's `headers` supplies — `Location` required on the new one, `ETag` optional on the found one.
+  /tasks/register:
+    post:
+      operationId: registerTask
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: string } }
+      responses:
+        '400': { description: Refused }
+        '200':
+          description: Already registered
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+        '201':
+          description: Registered
+          headers:
+            Location: { required: true, schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+  # The bodiless form: two documented successes carrying nothing, chosen per call.
+  /tasks/{id}/touch:
+    post:
+      operationId: touchTask
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '202': { description: Touch queued }
+        '204': { description: Touched }
+  # One success, with a required header: no status to choose, so the tuple is (headers:body:).
+  /tasks/{id}/version:
+    get:
+      operationId: taskVersion
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: The task, and its version as an entity tag
+          headers:
+            ETag: { required: true, schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
 components:
   parameters:
     TaskId: { name: id, in: path, required: true, schema: { type: string } }

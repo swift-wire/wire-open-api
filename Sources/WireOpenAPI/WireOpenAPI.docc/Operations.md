@@ -34,6 +34,61 @@ WireMVC `@Get` route uses — the same types, not a parallel set. That is the wh
 unification: one binding vocabulary whether a route came from a document or from an annotation,
 so what you learn on one applies to the other.
 
+## Choosing the response at run time
+
+Which response an operation answers with is the document's to declare. When it declares one
+success, a typed handler answers with it. When it declares several, the handler names one with
+`@JSONResponse(status:)` or `@ResponseStatus(_:)` — once, for every call.
+
+Some operations cannot decide that until the handler has run. Find-or-create is the common one:
+201 with a new resource, or 200 with the one a natural key already names. For those, return
+WireMVC's **response tuple**, the same labelled tuple a `@Post` route returns:
+
+```swift
+@Operation
+func registerTask(@Query id: String) async throws
+    -> (status: HTTPResponse.Status, headers: HTTPFields, body: Task)
+{
+    let (task, created) = try store.register(id)
+    return created
+        ? (.created, [.location: "/tasks/\(id)"], task)
+        : (.ok, [.eTag: task.version], task)
+}
+```
+
+The shapes are WireMVC's: `(status:body:)`, `(status:headers:body:)`, `(status:headers:)` for
+an operation whose successes carry no body, and `(headers:body:)` when there is no status to
+choose but the response declares headers. They are read by label, in that order.
+
+**The document still decides the set.** With a `status`, the handler may answer with any success
+the document declares for the operation, and nothing else. What can be checked when the code is
+generated is: that there is more than one success to choose between, that they all agree on
+whether they carry a body, and that no annotation names a status as well. What cannot is the
+value the handler returns, so that is checked on every call — a status outside the documented
+successes throws `WireOpenAPIUndocumentedResponse`.
+
+**Headers go into the response's declared headers.** The generated response carries them as
+typed members, so a returned field fills the member for the header of that name, matched
+case-insensitively. A field the chosen response does not declare, or a required header the
+fields leave out, also throws `WireOpenAPIUndocumentedResponse`: the first has no member to go
+in, and the second has nothing honest to put in its member. Only a header with a plain `string`
+schema can be built from a field value. A header typed as anything else is a build-time error
+when the handler returns fields, and a required header is a build-time error when it returns none.
+
+The serializer the generator emits writes a typed header value with URI coding, so a `/` or a
+`"` in a returned value goes out percent-encoded (`/tasks/1` as `%2Ftasks%2F1`). That is the
+generator's behaviour for every typed response header, not something the tuple adds.
+
+**An undocumented response is the service's fault, so it is always 500 with no body.** The
+caller did nothing wrong. Like a response that fails validation, it is rethrown past every
+`@ErrorResponse` clause, so a catch-all written to answer bad requests cannot answer it with a
+client-error status.
+
+This answers the objection the closure form of `@ErrorResponse` meets: a status chosen from a
+value cannot be checked against the document. A response tuple does not choose freely — the
+document's successes are the only cases the generated code can construct, and the value is
+checked against them before anything is sent.
+
 ## Why identity is declared rather than inferred
 
 Both attributes take an optional operation id, and bare they mean "the method's own name is the

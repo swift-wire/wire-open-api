@@ -186,6 +186,11 @@ extension OpenAPIKit.OpenAPI.Document {
                                 ),
                                 at: documentPath,
                                 describing: "the \(code) response of '\(operationID)'"
+                            ),
+                            headers: responseHeaders(
+                                of: response,
+                                at: documentPath,
+                                describing: "the \(code) response of '\(operationID)'"
                             )
                         )
                     }
@@ -205,6 +210,29 @@ extension OpenAPIKit.OpenAPI.Document {
             }
         }
         return found
+    }
+
+    /// A response's declared headers, resolved, in document order.
+    private func responseHeaders(
+        of response: OpenAPIKit.OpenAPI.Response,
+        at documentPath: String,
+        describing subject: String
+    ) -> [SpecResponseHeader] {
+        (response.headers ?? [:]).map { name, headerReference in
+            let header = resolve(headerReference, "a header reference '\(name)' in \(subject)", at: documentPath)
+            var isPlainString = false
+            if case .a(let context) = header.schemaOrContent {
+                let schema: OpenAPIKit.JSONSchema? =
+                    switch context.schema {
+                    case .a(let reference): try? components.lookup(reference)
+                    case .b(let schema): schema
+                    }
+                if let schema, case .string(let core, _) = schema.value {
+                    isPlainString = core.format == .unspecified && core.allowedValues == nil
+                }
+            }
+            return SpecResponseHeader(name: name, isRequired: header.required, isPlainString: isPlainString)
+        }
     }
 
     /// The declared request body: whether it must be present, what it can be, and what its JSON schema

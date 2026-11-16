@@ -210,6 +210,27 @@ jobs:
             "http://127.0.0.1:8080/api/v1/tasks/9/replace?title=renamed" -w ' [%{http_code}]')
           replacedBare=$(curl -s -X POST "http://127.0.0.1:8080/api/v1/tasks/9/replace?title=renamed" \
             -w ' [%{http_code}]')
+          # Response tuples on typed operations. `registerTask` documents 200 and 201 and the handler
+          # chooses per call; each response declares a header the tuple's `headers` supplies. Captured
+          # as `status|header|body` so one assertion covers all three.
+          tuple() { curl -s -D - "$@" | tr -d '\r' \
+            | awk 'NR==1{s=$2} tolower($1)=="location:"||tolower($1)=="etag:"{h=$2} /^\{/{b=$0}
+                   END{print s "|" h "|" b}'; }
+          registeredNew=$(tuple -X POST "http://127.0.0.1:8080/api/v1/tasks/register?id=r1")
+          registeredAgain=$(tuple -X POST "http://127.0.0.1:8080/api/v1/tasks/register?id=r1")
+          # A status the document does not declare, and a field neither response declares: the service
+          # broke its own contract, so 500 with no body — and the operation's catch-all does not answer
+          # either, which `refused` (an ordinary throw the catch-all does answer) is the control for.
+          undocumentedStatus=$(curl -s -o /dev/null -X POST -w '%{http_code}:%{size_download}' \
+            "http://127.0.0.1:8080/api/v1/tasks/register?id=teapot")
+          undocumentedHeader=$(curl -s -o /dev/null -X POST -w '%{http_code}:%{size_download}' \
+            "http://127.0.0.1:8080/api/v1/tasks/register?id=stray")
+          refused=$(curl -s -o /dev/null -X POST -w '%{http_code}' \
+            "http://127.0.0.1:8080/api/v1/tasks/register?id=refused")
+          touchedNow=$(curl -s -o /dev/null -X POST -w '%{http_code}' http://127.0.0.1:8080/api/v1/tasks/9/touch)
+          touchedLater=$(curl -s -o /dev/null -X POST -w '%{http_code}' \
+            http://127.0.0.1:8080/api/v1/tasks/later/touch)
+          versioned=$(tuple http://127.0.0.1:8080/api/v1/tasks/9/version)
           kill "$pid" 2>/dev/null || true
           [ "$ok" = 1 ] || { echo "the fixture did not bind"; cat serverlog.txt; exit 1; }
           # Foundation escapes `/` as `\/` in JSON output; strip the backslashes rather than write
@@ -424,6 +445,32 @@ jobs:
           case "$(plain "$mappedDocumented")" in
             *'"message":"no such task"'*) ;;
             *) echo "the body-returning @ErrorResponse form did not produce its body"; exit 1;;
+          esac
+
+          # Response tuples. The generator's serializer writes a typed header with URI coding, so a `/`
+          # or a quote in a value goes out percent-encoded — asserted as it is sent, not as it was set.
+          echo "=== response tuples ==="
+          echo "register (new)   → $registeredNew"
+          echo "register (again) → $registeredAgain"
+          echo "version          → $versioned"
+          case "$registeredNew" in
+            '201|%2Fapi%2Fv1%2Ftasks%2Fr1|{"id":"r1","title":"registered r1"}') ;;
+            *) echo "a returned 201 or its Location did not reach the wire ($registeredNew)"; exit 1;;
+          esac
+          case "$registeredAgain" in
+            '200|%22r1%22|{"id":"r1","title":"registered r1"}') ;;
+            *) echo "a returned 200 or its ETag did not reach the wire ($registeredAgain)"; exit 1;;
+          esac
+          [ "$undocumentedStatus" = "500:0" ] \
+            || { echo "an undocumented returned status was not 500 with no body ($undocumentedStatus)"; exit 1; }
+          [ "$undocumentedHeader" = "500:0" ] \
+            || { echo "an undeclared returned header was not 500 with no body ($undocumentedHeader)"; exit 1; }
+          [ "$refused" = 400 ] || { echo "the catch-all did not answer an ordinary throw ($refused)"; exit 1; }
+          [ "$touchedNow" = 204 ] && [ "$touchedLater" = 202 ] \
+            || { echo "a bodiless returned status was not sent ($touchedNow, $touchedLater)"; exit 1; }
+          case "$versioned" in
+            '200|%22v1-9%22|{"id":"9","title":"task-9"}') ;;
+            *) echo "(headers:body:) did not send its required header ($versioned)"; exit 1;;
           esac
 
           # It is app-scoped, so it enters no request scope even though its sibling in OrdersAPI does.

@@ -254,6 +254,33 @@ func parameterDocument(_ schema: String) -> String {
     """
 }
 
+/// A document whose single operation `opA` declares the given responses, each written in YAML flow style
+/// under its status — for the response-tuple diagnostics, which turn on which successes are documented
+/// and what each carries.
+func responsesDocument(_ responses: [(code: Int, response: String)]) -> String {
+    var lines = [
+        "openapi: 3.1.0", "info: { title: Gate, version: 1.0.0 }", "paths:", "  /opA:", "    get:",
+        "      operationId: opA", "      responses:",
+    ]
+    lines += responses.map { "        '\($0.code)': \($0.response)" }
+    return lines.joined(separator: "\n") + "\n"
+}
+
+let jsonTask = "description: ok, content: { application/json: { schema: { type: string } } }"
+
+/// A controller whose single typed `opA` returns `returnType`, under `attributes`. The body is a
+/// `fatalError`: these cases are refused before anything is compiled, and the accept case is not compiled
+/// by the tool at all.
+func tupleController(_ returnType: String, attributes: [String] = []) -> String {
+    ([
+        "import HTTPTypes", "import Wire", "import WireOpenAPI", "", "@Singleton", "@OpenAPIController",
+        "struct GateController {", "    @Operation",
+    ]
+        + attributes.map { "    " + $0 }
+        + ["    func opA() async throws -> \(returnType) { fatalError() }", "}"])
+        .joined(separator: "\n") + "\n"
+}
+
 struct Gate {
     let name: String
     /// Why this case exists, carried into the golden so a reader of the table knows what it protects.
@@ -425,6 +452,61 @@ let gates: [Gate] = [
         summary: "the same document builds when nobody asked for the check — the other half of the rule",
         document: responseDocument("{ type: object, minProperties: 2, properties: { a: { type: string } } }"),
         controller: controller(raw: true, operations: [("opA", [])])
+    ),
+    // Response tuples: a typed handler saying something about its response alongside the body.
+    Gate(
+        name: "tuple/status-with-one-success",
+        summary: "a returned status chooses among documented successes, so one success leaves no choice",
+        document: responsesDocument([(200, "{ \(jsonTask) }")]),
+        controller: tupleController("(status: HTTPResponse.Status, body: String)")
+    ),
+    Gate(
+        name: "tuple/status-beside-an-annotation",
+        summary: "a status returned and a status annotated contradict each other",
+        document: responsesDocument([(200, "{ \(jsonTask) }"), (201, "{ \(jsonTask) }")]),
+        controller: tupleController(
+            "(status: HTTPResponse.Status, body: String)",
+            attributes: ["@JSONResponse(status: .created)"]
+        )
+    ),
+    Gate(
+        name: "tuple/successes-disagree-on-a-body",
+        summary: "a tuple has one body element, so every success it can answer with must carry one",
+        document: responsesDocument([(200, "{ \(jsonTask) }"), (204, "{ description: none }")]),
+        controller: tupleController("(status: HTTPResponse.Status, body: String)")
+    ),
+    Gate(
+        name: "tuple/header-the-shim-cannot-build",
+        summary: "a returned field becomes a typed member, which only a plain string schema is built from",
+        document: responsesDocument([
+            (200, "{ \(jsonTask), headers: { X-Count: { schema: { type: integer } } } }"),
+            (201, "{ \(jsonTask) }"),
+        ]),
+        controller: tupleController("(status: HTTPResponse.Status, headers: HTTPFields, body: String)")
+    ),
+    Gate(
+        name: "tuple/required-header-not-returned",
+        summary: "a required header has to come from somewhere, and a handler returning no fields has none",
+        document: responsesDocument([
+            (200, "{ \(jsonTask) }"),
+            (201, "{ \(jsonTask), headers: { Location: { required: true, schema: { type: string } } } }"),
+        ]),
+        controller: tupleController("(status: HTTPResponse.Status, body: String)")
+    ),
+    Gate(
+        name: "tuple/not-a-response-shape",
+        summary: "the labels are read in WireMVC's canonical order, and anything else is not a response tuple",
+        document: responsesDocument([(200, "{ \(jsonTask) }"), (201, "{ \(jsonTask) }")]),
+        controller: tupleController("(body: String, status: HTTPResponse.Status)")
+    ),
+    Gate(
+        name: "accepted/status-tuple-over-two-successes",
+        summary: "the shape the tuple diagnostics point at: a status chosen among two documented successes",
+        document: responsesDocument([
+            (200, "{ \(jsonTask), headers: { ETag: { schema: { type: string } } } }"),
+            (201, "{ \(jsonTask), headers: { Location: { required: true, schema: { type: string } } } }"),
+        ]),
+        controller: tupleController("(status: HTTPResponse.Status, headers: HTTPFields, body: String)")
     ),
     // The one accept case, and it earns its place: it is the arrangement the "disagree" message tells the
     // author to move to. A diagnostic whose advice does not work is worse than no diagnostic.
