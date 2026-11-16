@@ -4,8 +4,8 @@
 import WireOpenAPINaming
 
 // The build-time half of a typed operation returning a response tuple: what the document lets it answer
-// with, and what it has to supply. The run-time half — the value the handler returned — is checked by
-// the generated forwarder on every call.
+// with, what it has to supply, and the status enum it chooses with. The run-time half — the header fields
+// the handler returned — is checked by the generated forwarder on every call.
 
 extension DirectDispatchEmitter {
     /// A handler returning its status chooses among the document's successes per call, so there has to be
@@ -33,6 +33,7 @@ extension DirectDispatchEmitter {
                 at: operation
             )
         }
+        diagnoseStatusType(operation, successes: successes)
         // Said in terms of the tuple: the handler did not pick these responses, the document offered them,
         // and a tuple has one `body` element to answer every one of them with.
         for selected in successes {
@@ -49,6 +50,87 @@ extension DirectDispatchEmitter {
                     at: operation
                 )
             }
+        }
+    }
+
+    /// The tuple's `status` must be an enum whose cases are exactly the operation's documented successes,
+    /// named as the generated `Output` cases are — the only type that lets the compiler, rather than a
+    /// run-time check, refuse a status the document does not declare.
+    ///
+    /// The cases are compared here, and only here: the forwarder's switch names each documented success,
+    /// so a case it does not name would also fail to compile, but as an exhaustiveness error inside
+    /// generated code rather than a message about the document.
+    private func diagnoseStatusType(_ operation: DiscoveredOperation, successes: [SpecResponse]) {
+        guard let returned = operation.responseShape.returnedStatus else { return }
+        let documented = successes.map { GeneratorStatusNames.safeName(for: $0.code) }
+        let enumName = "\(operationNamespace(operation)).SuccessStatus"
+        let declaration = """
+            Declare `extension \(operationNamespace(operation)) { enum SuccessStatus: Sendable, Hashable, \
+            CaseIterable { \(documented.map { "case \($0)" }.joined(separator: "; ")) } }` and return \
+            `status: \(enumName)`.
+            """
+        let prefix = "'\(operation.operationID)' returns its status in a response tuple"
+        switch returned {
+        case .httpResponseStatus(let written):
+            fail(
+                """
+                \(prefix) as '\(written)', which would let the handler answer with a status its document \
+                does not declare. Return an enum of the documented successes instead. \(declaration)
+                """,
+                at: operation
+            )
+        case .unresolved(let written, .notFound):
+            fail(
+                """
+                \(prefix) as '\(written)', which names no enum declared in the sources this build reads. \
+                The status has to be an enum of the documented successes. \(declaration)
+                """,
+                at: operation
+            )
+        case .unresolved(let written, .ambiguous(let count)):
+            fail(
+                """
+                \(prefix) as '\(written)', which matches \(count) enum declarations in the sources this \
+                build reads. Qualify it, as `\(enumName)`, so it names one.
+                """,
+                at: operation
+            )
+        case .declared(let written, let declared):
+            if declared.hasAssociatedValues {
+                fail(
+                    """
+                    \(prefix) as '\(written)', whose cases carry associated values the generated response \
+                    has nowhere to put. Its cases must be plain: \(documented.joined(separator: ", ")).
+                    """,
+                    at: operation
+                )
+            }
+            diagnoseStatusCases(operation, written: written, declared: declared.cases, documented: documented)
+        }
+    }
+
+    /// The declared cases against the documented successes, naming the difference both ways.
+    private func diagnoseStatusCases(
+        _ operation: DiscoveredOperation,
+        written: String,
+        declared: [String],
+        documented: [String]
+    ) {
+        let listed = { (names: [String]) in names.map { ".\($0)" }.joined(separator: ", ") }
+        let missing = documented.filter { !declared.contains($0) }
+        let extra = declared.filter { !documented.contains($0) }
+        guard missing.isEmpty, extra.isEmpty else {
+            let parts =
+                (extra.isEmpty ? [] : ["declares \(listed(extra)), which the document does not"])
+                + (missing.isEmpty ? [] : ["omits \(listed(missing)), which the document declares"])
+            fail(
+                """
+                '\(operation.operationID)' returns its status in a response tuple as '\(written)', whose cases \
+                must be exactly the operation's documented successes (\(listed(documented))). It \
+                \(parts.joined(separator: ", and ")).
+                """,
+                at: operation
+            )
         }
     }
 

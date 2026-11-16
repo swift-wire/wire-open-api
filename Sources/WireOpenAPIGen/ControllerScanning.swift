@@ -21,15 +21,14 @@ final class ControllerScanner: SyntaxVisitor {
     private let file: String
     private let converter: SourceLocationConverter
 
-    /// The graph-aware bindings reachable in this run, so a parameter attribute outside the four names
-    /// this generator knows can still be recognised as one — see `GraphAwareBindings`.
-    let graphAwareBindings: GraphAwareBindings
+    /// What this run reads across every source, not just this file — see `SourceIndexes`.
+    let indexes: SourceIndexes
 
-    init(module: String, file: String, tree: SourceFileSyntax, graphAwareBindings: GraphAwareBindings) {
+    init(module: String, file: String, tree: SourceFileSyntax, indexes: SourceIndexes) {
         self.module = module
         self.file = file
         self.converter = SourceLocationConverter(fileName: file, tree: tree)
-        self.graphAwareBindings = graphAwareBindings
+        self.indexes = indexes
         super.init(viewMode: .sourceAccurate)
     }
 
@@ -231,9 +230,7 @@ final class ControllerScanner: SyntaxVisitor {
     private func typedOperation(_ operationID: String, _ function: FunctionDeclSyntax) -> DiscoveredOperation {
         // No return clause is not an error: it is how a documented no-content response is written. The
         // emitter checks that against the response it selects.
-        let shape = ResponseShape.read(function.signature.returnClause?.type, operationID: operationID) {
-            diagnose($0, at: function.name)
-        }
+        let shape = responseShape(of: function, operationID: operationID)
         var parameters: [BoundParameter] = []
         for parameter in function.signature.parameterClause.parameters {
             var binding: String?
@@ -245,7 +242,7 @@ final class ControllerScanner: SyntaxVisitor {
                 // The four are this generator's own vocabulary; anything else is a binding only if its
                 // declaration says so. A graph-aware one is admitted here and excused the document match
                 // below, since what it binds never crosses the wire.
-                if let named = graphAwareBindings.worker(forAttribute: name) {
+                if let named = indexes.graphAwareBindings.worker(forAttribute: name) {
                     binding = name
                     worker = named
                 } else if ["Path", "Query", "Header", "JSONBody"].contains(name) {
@@ -273,7 +270,7 @@ final class ControllerScanner: SyntaxVisitor {
                 BoundParameter(
                     binding: binding,
                     worker: worker,
-                    workerSeed: worker.flatMap { graphAwareBindings.seed(ofWorker: $0) },
+                    workerSeed: worker.flatMap { indexes.graphAwareBindings.seed(ofWorker: $0) },
                     documentedName: documented ?? ownName,
                     label: label,
                     name: ownName,
@@ -301,7 +298,7 @@ final class ControllerScanner: SyntaxVisitor {
 
     /// Report and exit — a malformed `@RawOperation` cannot produce a forwarder, and continuing would
     /// emit an incomplete conformance whose error points at generated code instead of the method.
-    private func diagnose(_ message: String, at token: TokenSyntax) -> Never {
+    func diagnose(_ message: String, at token: TokenSyntax) -> Never {
         let line = converter.location(for: token.position).line
         FileHandle.standardError.write(Data("\(file):\(line): error: \(message)\n".utf8))
         exit(1)
@@ -350,7 +347,10 @@ extension ControllerScanner {
 func discoverControllers(in sources: [(module: String, paths: [String])]) -> [DiscoveredController] {
     // Scanned first and over the same sources: a wrapper may be declared after the controller that uses
     // it, or in another module entirely, so a scan that resolved as it went would depend on file order.
-    let graphAwareBindings = GraphAwareBindings(sources: sources)
+    let indexes = SourceIndexes(
+        graphAwareBindings: GraphAwareBindings(sources: sources),
+        declaredEnums: DeclaredEnums(sources: sources)
+    )
     var discovered: [DiscoveredController] = []
     for group in sources {
         for path in group.paths {
@@ -360,11 +360,22 @@ func discoverControllers(in sources: [(module: String, paths: [String])]) -> [Di
                 module: group.module,
                 file: path,
                 tree: tree,
-                graphAwareBindings: graphAwareBindings
+                indexes: indexes
             )
             scanner.walk(tree)
             discovered.append(contentsOf: scanner.controllers)
         }
     }
     return discovered
+}
+
+/// The declarations a controller scan resolves names against, gathered once from every source this run
+/// reads: a binding or a status enum can be declared in a different file, or module, from the controller
+/// that names it.
+struct SourceIndexes {
+    /// The graph-aware bindings reachable in this run, so a parameter attribute outside the four names
+    /// this generator knows can still be recognised as one — see `GraphAwareBindings`.
+    let graphAwareBindings: GraphAwareBindings
+    /// The enums a response tuple's `status` may name — see `DeclaredEnums`.
+    let declaredEnums: DeclaredEnums
 }

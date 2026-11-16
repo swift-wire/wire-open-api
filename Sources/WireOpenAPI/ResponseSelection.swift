@@ -9,16 +9,19 @@ public import OpenAPIRuntime
 // to say something about its response alongside the body.
 //
 // The document decides which responses the operation may answer with; the generated forwarder switches
-// over them, one generated `Output` case each. What cannot be decided when the code is generated is the
-// *value* the handler returns: a status, and the header fields. Those are checked here, on every call,
-// against what the document declared — and a handler that answers with something the document does not
-// describe is the service breaking its own contract, which is what the error below says.
+// over them, one generated `Output` case each. The status is not checked here: a handler returning one
+// returns an enum of exactly the operation's documented successes, which the generator verifies against
+// the document, so the compiler refuses any other status and the forwarder's switch over it is
+// exhaustive. What cannot be decided when the code is generated is the *header fields* the handler
+// returns, a run-time value. Those are checked here, on every call, against what the chosen response
+// declares — and a handler that answers with something the document does not describe is the service
+// breaking its own contract, which is what the error below says.
 
 /// A typed operation answered with a response its document does not describe.
 ///
-/// Thrown by the generated forwarder when the handler's returned status is not one of the operation's
-/// documented successes, when its returned header fields name one the chosen response does not declare,
-/// or when they omit one it declares as required.
+/// Thrown by the generated forwarder when the handler's returned header fields name one the chosen
+/// response does not declare, or omit one it declares as required. A status outside the documented
+/// successes is not among the reasons: the handler cannot return one.
 ///
 /// **Always 500, never a body**, for the reason ``WireOpenAPIResponseValidationError`` is: the caller did
 /// nothing wrong and can do nothing about it. It is rethrown past every `@ErrorResponse` clause in the
@@ -26,8 +29,6 @@ public import OpenAPIRuntime
 public struct WireOpenAPIUndocumentedResponse: Error, Sendable, Equatable, HTTPResponseConvertible {
     /// What about the response the document does not describe.
     public enum Reason: Sendable, Equatable {
-        /// The status is not one of the operation's documented successes.
-        case status
         /// A returned header field the chosen response does not declare, by its canonical name.
         case undeclaredHeader(String)
         /// A header the chosen response declares as required, absent from the returned fields.
@@ -35,11 +36,11 @@ public struct WireOpenAPIUndocumentedResponse: Error, Sendable, Equatable, HTTPR
     }
 
     public let operationID: String
-    /// The status the handler returned.
+    /// The status of the response being built when the breach was found.
     public let status: HTTPResponse.Status
     public let reason: Reason
 
-    public init(operationID: String, status: HTTPResponse.Status, reason: Reason = .status) {
+    public init(operationID: String, status: HTTPResponse.Status, reason: Reason) {
         self.operationID = operationID
         self.status = status
         self.reason = reason

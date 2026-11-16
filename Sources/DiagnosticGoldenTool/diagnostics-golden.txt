@@ -97,6 +97,18 @@ rejected: Controller.swift:9: error: the response tuple returned by @Operation '
 # the shape the tuple diagnostics point at: a status chosen among two documented successes
 accepted
 
+## tuple/status-is-an-http-response-status
+# a WireMVC route's status type would let the handler return one the document does not declare
+rejected: Controller.swift:9: error: 'opA' returns its status in a response tuple as 'HTTPResponse.Status', which would let the handler answer with a status its document does not declare. Return an enum of the documented successes instead. Declare `extension Operations.OpA { enum SuccessStatus: Sendable, Hashable, CaseIterable { case ok; case created } }` and return `status: Operations.OpA.SuccessStatus`.
+
+## tuple/status-enum-not-declared
+# the cases are checked against the document, so the enum has to be one this build can read
+rejected: Controller.swift:9: error: 'opA' returns its status in a response tuple as 'Operations.OpA.SuccessStatus', which names no enum declared in the sources this build reads. The status has to be an enum of the documented successes. Declare `extension Operations.OpA { enum SuccessStatus: Sendable, Hashable, CaseIterable { case ok; case created } }` and return `status: Operations.OpA.SuccessStatus`.
+
+## tuple/status-enum-cases-differ
+# the enum is what the compiler holds the handler to, so it must be exactly the successes
+rejected: Controller.swift:9: error: 'opA' returns its status in a response tuple as 'Operations.OpA.SuccessStatus', whose cases must be exactly the operation's documented successes (.ok, .created). It declares .accepted, which the document does not, and omits .created, which the document declares.
+
 ## accepted/per-operation-forms-are-the-remedy-for-disagreement
 # each operation takes the form its own documented response requires
 accepted

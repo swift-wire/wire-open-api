@@ -47,12 +47,19 @@ WireMVC's **response tuple**, the same labelled tuple a `@Post` route returns:
 ```swift
 @Operation
 func registerTask(@Query id: String) async throws
-    -> (status: HTTPResponse.Status, headers: HTTPFields, body: Task)
+    -> (status: Operations.RegisterTask.SuccessStatus, headers: HTTPFields, body: Task)
 {
     let (task, created) = try store.register(id)
     return created
         ? (.created, [.location: "/tasks/\(id)"], task)
         : (.ok, [.eTag: task.version], task)
+}
+
+extension Operations.RegisterTask {
+    enum SuccessStatus: Sendable, Hashable, CaseIterable {
+        case ok
+        case created
+    }
 }
 ```
 
@@ -60,17 +67,28 @@ The shapes are WireMVC's: `(status:body:)`, `(status:headers:body:)`, `(status:h
 an operation whose successes carry no body, and `(headers:body:)` when there is no status to
 choose but the response declares headers. They are read by label, in that order.
 
-**The document still decides the set.** With a `status`, the handler may answer with any success
-the document declares for the operation, and nothing else. What can be checked when the code is
-generated is: that there is more than one success to choose between, that they all agree on
-whether they carry a body, and that no annotation names a status as well. What cannot is the
-value the handler returns, so that is checked on every call — a status outside the documented
-successes throws `WireOpenAPIUndocumentedResponse`.
+**The status is an enum of the document's successes.** It is not `HTTPResponse.Status`, the type
+a WireMVC route's tuple uses: that would let the handler return a status the document does not
+declare, so it is a build-time error that names the enum to declare instead. You declare the enum
+yourself, beside the controller, with one case per success the document declares for the
+operation, named as the generated `Output` cases are (`ok`, `created`, `noContent`). The build
+checks the cases are exactly those. Nesting it as `Operations.<Operation>.SuccessStatus` is the
+convention the diagnostics suggest, and swift-openapi-generator emits nothing by that name. Any
+plain enum the build can read is accepted.
+
+That leaves a status the document does not declare as something the handler cannot write, so the
+compiler refuses it (`type 'Operations.RegisterTask.SuccessStatus' has no member 'accepted'`). The
+generated forwarder switches over the enum with no `default`. This is argued from how the pieces
+fit, not machine-verified. The package has no harness that asserts a build fails, so the compiler
+error above was checked once by hand.
+
+The build also checks that there is more than one success to choose between, that they all agree
+on whether they carry a body, and that no annotation names a status as well.
 
 **Headers go into the response's declared headers.** The generated response carries them as
 typed members, so a returned field fills the member for the header of that name, matched
 case-insensitively. A field the chosen response does not declare, or a required header the
-fields leave out, also throws `WireOpenAPIUndocumentedResponse`: the first has no member to go
+fields leave out, throws `WireOpenAPIUndocumentedResponse`: the first has no member to go
 in, and the second has nothing honest to put in its member. Only a header with a plain `string`
 schema can be built from a field value. A header typed as anything else is a build-time error
 when the handler returns fields, and a required header is a build-time error when it returns none.
@@ -79,15 +97,15 @@ The serializer the generator emits writes a typed header value with URI coding, 
 `"` in a returned value goes out percent-encoded (`/tasks/1` as `%2Ftasks%2F1`). That is the
 generator's behaviour for every typed response header, not something the tuple adds.
 
-**An undocumented response is the service's fault, so it is always 500 with no body.** The
+**An undocumented header is the service's fault, so it is always 500 with no body.** The
 caller did nothing wrong. Like a response that fails validation, it is rethrown past every
 `@ErrorResponse` clause, so a catch-all written to answer bad requests cannot answer it with a
 client-error status.
 
 This answers the objection the closure form of `@ErrorResponse` meets: a status chosen from a
-value cannot be checked against the document. A response tuple does not choose freely — the
-document's successes are the only cases the generated code can construct, and the value is
-checked against them before anything is sent.
+value cannot be checked against the document. A response tuple does not choose freely. Its status
+is an enum whose cases the build holds to the document's successes, and its header fields are
+checked against the chosen response before anything is sent.
 
 ## Why identity is declared rather than inferred
 

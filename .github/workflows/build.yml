@@ -218,11 +218,10 @@ jobs:
                    END{print s "|" h "|" b}'; }
           registeredNew=$(tuple -X POST "http://127.0.0.1:8080/api/v1/tasks/register?id=r1")
           registeredAgain=$(tuple -X POST "http://127.0.0.1:8080/api/v1/tasks/register?id=r1")
-          # A status the document does not declare, and a field neither response declares: the service
-          # broke its own contract, so 500 with no body — and the operation's catch-all does not answer
-          # either, which `refused` (an ordinary throw the catch-all does answer) is the control for.
-          undocumentedStatus=$(curl -s -o /dev/null -X POST -w '%{http_code}:%{size_download}' \
-            "http://127.0.0.1:8080/api/v1/tasks/register?id=teapot")
+          # A field neither response declares: the service broke its own contract, so 500 with no body —
+          # and the operation's catch-all does not answer it, which `refused` (an ordinary throw the
+          # catch-all does answer) is the control for. A status the document does not declare has no probe:
+          # the handler's status enum has no case for one, so it cannot be returned.
           undocumentedHeader=$(curl -s -o /dev/null -X POST -w '%{http_code}:%{size_download}' \
             "http://127.0.0.1:8080/api/v1/tasks/register?id=stray")
           refused=$(curl -s -o /dev/null -X POST -w '%{http_code}' \
@@ -461,8 +460,6 @@ jobs:
             '200|%22r1%22|{"id":"r1","title":"registered r1"}') ;;
             *) echo "a returned 200 or its ETag did not reach the wire ($registeredAgain)"; exit 1;;
           esac
-          [ "$undocumentedStatus" = "500:0" ] \
-            || { echo "an undocumented returned status was not 500 with no body ($undocumentedStatus)"; exit 1; }
           [ "$undocumentedHeader" = "500:0" ] \
             || { echo "an undeclared returned header was not 500 with no body ($undocumentedHeader)"; exit 1; }
           [ "$refused" = 400 ] || { echo "the catch-all did not answer an ordinary throw ($refused)"; exit 1; }

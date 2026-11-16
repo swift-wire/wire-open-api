@@ -11,8 +11,9 @@ import Testing
 /// The run-time checks a typed operation returning a response tuple makes on every call.
 ///
 /// The document fixes which responses the operation may answer with, and the generator switches over
-/// them; what is left is the *value* the handler returned. These are the functions the generated
-/// forwarder calls with it, and the fixture proves the same behaviour over HTTP.
+/// them; the status is an enum of exactly those, so the compiler holds the handler to it. What is left is
+/// the *header fields* the handler returned. These are the functions the generated forwarder checks them
+/// with, and the fixture proves the same behaviour over HTTP.
 @Suite("Response tuples")
 struct ResponseSelectionTests {
     private let fields: HTTPFields = [.eTag: "\"v1\"", .location: "/tasks/1"]
@@ -20,7 +21,7 @@ struct ResponseSelectionTests {
     @Test("an undocumented response is 500, whatever about it was undocumented")
     func undocumentedIs500() {
         let reasons: [WireOpenAPIUndocumentedResponse.Reason] = [
-            .status, .undeclaredHeader("x-stray"), .missingHeader("Location"),
+            .undeclaredHeader("x-stray"), .missingHeader("Location"),
         ]
         for reason in reasons {
             let error = WireOpenAPIUndocumentedResponse(operationID: "op", status: .accepted, reason: reason)
@@ -89,7 +90,11 @@ struct ResponseSelectionTests {
     /// The runtime wraps a handler's throw in `ServerError`, so the check has to see through it.
     @Test("both service breaches are recognised, wrapped by the runtime or not")
     func serviceBreaches() {
-        let undocumented = WireOpenAPIUndocumentedResponse(operationID: "op", status: .accepted)
+        let undocumented = WireOpenAPIUndocumentedResponse(
+            operationID: "op",
+            status: .ok,
+            reason: .undeclaredHeader("x-stray")
+        )
         let invalid = WireOpenAPIResponseValidationError(operationID: "op", failures: [])
         let wrapped = ServerError(
             operationID: "op",

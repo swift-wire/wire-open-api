@@ -366,9 +366,13 @@ extension DirectDispatchEmitter {
         at operation: DiscoveredOperation? = nil,
         in controller: DiscoveredController? = nil
     ) -> Never {
-        // The owning controller when the caller knows it: a group's controllers can live in different
-        // files, so reporting everything against the first one would point at the wrong source.
-        let source = controller ?? controllers[0]
+        // The owning controller: a group's controllers can live in different files, so reporting
+        // everything against the first one would point at the wrong source. An operation id is unique in a
+        // group, so an operation names its controller when the caller did not.
+        let owner = operation.flatMap { operation in
+            controllers.first { $0.operations.contains { $0.operationID == operation.operationID } }
+        }
+        let source = controller ?? owner ?? controllers[0]
         let line = operation?.line ?? source.line
         FileHandle.standardError.write(Data("\(source.file):\(line): error: \(message)\n".utf8))
         exit(1)

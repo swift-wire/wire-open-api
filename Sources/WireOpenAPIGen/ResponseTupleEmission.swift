@@ -9,10 +9,11 @@ extension DirectDispatchEmitter {
     /// What a handler returning a **response tuple** answers with, given `wireOpenAPIResult` in hand.
     ///
     /// Without a `status` the response is the one ``selectedResponse(for:)`` picks, as for a bare body.
-    /// With one, the handler chose at run time, so this switches on the status's code over every success
-    /// the document declares — one generated `Output` case each — and a code outside them is the service
-    /// answering with a response its document does not describe. That is checked here, on every call,
-    /// because it is the one thing about the response that is a value rather than a declaration.
+    /// With one, the handler chose at run time by returning a case of an enum of the operation's
+    /// documented successes — its cases verified against the document by `diagnoseReturnedStatus` — so this
+    /// switches over that enum, one generated `Output` case each, with no `default`. The switch is
+    /// exhaustive because the enum is closed: a status the document does not declare is not a value the
+    /// handler can produce, and so not one this forwarder has to answer.
     func tupleResponse(_ operation: DiscoveredOperation, indent: String) -> String {
         let bodyLocal = "wireOpenAPIResultBody"
         let bound =
@@ -23,23 +24,18 @@ extension DirectDispatchEmitter {
             return bound + constructed(response, operation, status: status, body: bodyLocal, indent: indent)
         }
         let cases = candidateResponses(for: operation).map { response in
-            "\(indent)case \(response.code):\n"
+            "\(indent)case .\(GeneratorStatusNames.safeName(for: response.code)):\n"
                 + constructed(
                     response,
                     operation,
-                    status: "wireOpenAPIResult.status",
+                    status: "HTTPResponse.Status(code: \(response.code))",
                     body: bodyLocal,
                     indent: indent + "    "
                 )
         }
         return """
-            \(bound)\(indent)switch wireOpenAPIResult.status.code {
+            \(bound)\(indent)switch wireOpenAPIResult.status {
             \(cases.joined(separator: "\n"))
-            \(indent)default:
-            \(indent)    throw WireOpenAPIUndocumentedResponse(
-            \(indent)        operationID: "\(operation.operationID)",
-            \(indent)        status: wireOpenAPIResult.status
-            \(indent)    )
             \(indent)}
             """
     }

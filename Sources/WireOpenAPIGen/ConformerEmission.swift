@@ -231,10 +231,10 @@ extension DirectDispatchEmitter {
             \(indent)    throw wireOpenAPIResponseFailure
             """ + "\n"
             : ""
-        // The same blame, for the same reason: a response tuple whose status or fields the document does
-        // not describe is the service's breach, and no mapping the author wrote for a caller's mistake
-        // should answer it.
-        if operation.isResponseTuple {
+        // The same blame, for the same reason: header fields the document does not describe are the
+        // service's breach, and no mapping the author wrote for a caller's mistake should answer it. Only a
+        // tuple returning fields can commit one — its status is an enum of the documented successes.
+        if operation.returnsHeaders {
             regress += """
                 \(indent)} catch let wireOpenAPIUndocumented as WireOpenAPIUndocumentedResponse {
                 \(indent)    throw wireOpenAPIUndocumented

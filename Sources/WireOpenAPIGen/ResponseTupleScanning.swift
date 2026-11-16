@@ -16,12 +16,21 @@ struct ResponseShape {
     /// The body's type as written, or nil when the handler returns no body.
     var body: String?
     var isTuple = false
-    var status = false
+    /// What the tuple's `status` element names, or nil when it has none.
+    var returnedStatus: ReturnedStatus?
     var headers = false
+
+    /// The tuple carries a `status`.
+    var status: Bool { returnedStatus != nil }
 
     /// `refuse` reports a labelled tuple that names response labels but is not one of the legal shapes —
     /// the scanner's own diagnostic, so the message points at the method.
-    static func read(_ type: TypeSyntax?, operationID: String, refuse: (String) -> Never) -> ResponseShape {
+    static func read(
+        _ type: TypeSyntax?,
+        operationID: String,
+        enums: DeclaredEnums,
+        refuse: (String) -> Never
+    ) -> ResponseShape {
         guard let type else { return ResponseShape() }
         let known = ["status", "headers", "body"]
         guard let tuple = type.as(TupleTypeSyntax.self), tuple.elements.count > 1,
@@ -36,11 +45,47 @@ struct ResponseShape {
                     + "(status:body:), (status:headers:body:), (status:headers:) or (headers:body:)."
             )
         }
+        let status = tuple.elements.first { $0.firstName?.text == "status" }?.type.trimmedDescription
         return ResponseShape(
             body: tuple.elements.first { $0.firstName?.text == "body" }?.type.trimmedDescription,
             isTuple: true,
-            status: labels.contains("status"),
+            returnedStatus: status.map { ReturnedStatus($0, enums: enums) },
             headers: labels.contains("headers")
         )
+    }
+}
+
+/// What a response tuple's `status` element names.
+///
+/// An enum of the operation's documented successes is the only legal answer, because it is the one the
+/// compiler can hold the handler to. `HTTPResponse.Status` is singled out because it is the type a
+/// WireMVC route's tuple uses, so it is the mistake most worth a message of its own: it would let the
+/// handler return any status at all.
+enum ReturnedStatus {
+    case httpResponseStatus(written: String)
+    case declared(written: String, DeclaredEnum)
+    case unresolved(written: String, StatusEnumRefusal)
+
+    init(_ written: String, enums: DeclaredEnums) {
+        if written.split(separator: ".").suffix(2) == ["HTTPResponse", "Status"] {
+            self = .httpResponseStatus(written: written)
+            return
+        }
+        switch enums.resolve(written) {
+        case .success(let declared): self = .declared(written: written, declared)
+        case .failure(let refusal): self = .unresolved(written: written, refusal)
+        }
+    }
+}
+
+extension ControllerScanner {
+    /// The response shape a typed operation's return clause declares, its status resolved against the
+    /// enums this run reads.
+    func responseShape(of function: FunctionDeclSyntax, operationID: String) -> ResponseShape {
+        ResponseShape.read(
+            function.signature.returnClause?.type,
+            operationID: operationID,
+            enums: indexes.declaredEnums
+        ) { diagnose($0, at: function.name) }
     }
 }

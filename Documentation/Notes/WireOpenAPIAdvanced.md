@@ -516,15 +516,29 @@ nine of them for this reason alone, each re-implementing the body unwrap and eve
 
 The answer is WireMVC's response tuple, `(status:headers:body:)` and its subsets, because one binding
 vocabulary for both authoring styles is the point of the shim and WireMVC already had the shape
-(swift-wire/wire-mvc#74). With a `status`, the forwarder switches on the code over the document's 2xx responses — one
-generated `Output` case each — and throws `WireOpenAPIUndocumentedResponse` for anything else.
+(swift-wire/wire-mvc#74). The one departure is the `status` element's type. A WireMVC route returns an
+`HTTPResponse.Status`, and an operation returns an enum of its document's 2xx responses, named as the
+generated `Output` cases are. WireOpenAPIGen reads the enum's declaration from the sources it scans and
+checks its cases are exactly those successes. The forwarder switches over the enum exhaustively, with no
+`default`. An `HTTPResponse.Status` there is a build-time error naming the enum to declare.
 
-It meets the objection that keeps the closure form of `@ErrorResponse` out of operations — a status
-chosen from a value cannot be checked against the document — by splitting what is checked where. The
-*set* is the document's, and the build checks the handler against it: more than one success, all
-agreeing on a body, no annotation naming a status beside the tuple. The *value* is checked on every
-call, before anything is sent. Whether the successes' body schemas agree is left to the type checker:
-each case's `.json(…)` must accept the one `body` type, exactly as for a single response.
+This meets the objection that keeps the closure form of `@ErrorResponse` out of operations: a status
+chosen from a value cannot be checked against the document. Here the value's *type* is checked against
+the document instead, so the compiler refuses an undocumented status in the handler. Checking the
+returned code on every call instead would turn a bug the compiler can catch into one a request has to
+find. The claim that an undocumented status does not
+compile is argued, not machine-verified: the package has no compile-failure harness, so it was checked
+once by hand against the fixture.
+
+The author declares the enum, rather than the generator emitting it, because the generator writes only
+into the target it runs for. That is the app's target, which has to see every document's dependencies,
+and controllers routinely live in a library the app depends on. media-silo's do, and so does the
+fixture's `OrderController`. A type emitted into the app would be invisible to every handler in the
+library. The declaration costs one line per success, and the build checks every line of it.
+
+The build also checks that there is more than one success, that they all agree on a body, and that no
+annotation names a status beside the tuple. Whether the successes' body schemas agree is left to the type
+checker: each case's `.json(…)` must accept the one `body` type, exactly as for a single response.
 
 Returned headers fill the chosen response's generated `Headers`. Two choices worth recording:
 
@@ -536,7 +550,7 @@ Returned headers fill the chosen response's generated `Headers`. Two choices wor
   send vanish from the wire. Refusing it answers 500 on the first request that reaches it, which says the
   document and the handler disagree.
 
-Both refusals and the undocumented status are the service breaking its own contract, so they share
+Both refusals are the service breaking its own contract, so they share
 `WireOpenAPIResponseValidationError`'s treatment: 500, no body, rethrown past the forwarder's
 `@ErrorResponse` clauses, and skipped by the terminal's rejection closure — whose catch-all would
 otherwise answer them, since a catch-all is terminal-scoped. The terminal check covers response
