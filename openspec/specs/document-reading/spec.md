@@ -15,14 +15,14 @@ Rationale: [WireOpenAPIAdvanced](../../../Documentation/Notes/WireOpenAPIAdvance
 
 ## Requirements
 
-### Requirement: OpenAPI 3.0 documents are decoded by OpenAPIKit30 and converted
-WireOpenAPIGen SHALL read the document's `openapi:` value first and, for `3.0.0`, `3.0.1`, `3.0.2`,
-`3.0.3` and `3.0.4`, SHALL decode the document with `OpenAPIKit30` and convert it with
-`convert(to: .v3_1_0)`, so the rest of the generator reads one OpenAPIKit 3.1 model.
+### Requirement: OpenAPI 3.0 documents are accepted and read as 3.1 documents are
+WireOpenAPIGen SHALL read the document's `openapi:` value first and SHALL accept `3.0.0`, `3.0.1`,
+`3.0.2`, `3.0.3` and `3.0.4`, treating such a document exactly as it treats a 3.1 one, so its
+operations are derived and served the same way.
 
 #### Scenario: a 3.0.3 document
 - **WHEN** the document passed as `--spec` begins `openapi: 3.0.3`
-- **THEN** it is decoded as an `OpenAPIKit30.OpenAPI.Document` and read as its 3.1 conversion
+- **THEN** it is accepted, and its operations are served as they would be from the same document declared `openapi: 3.1.0`
 
 Pinned by: nothing yet.
 
@@ -71,8 +71,8 @@ Pinned by: nothing yet.
 
 ### Requirement: References are resolved where they are read
 WireOpenAPIGen SHALL resolve a `$ref` at each of the places it reads (the path item, each parameter,
-each response, the request body, and a JSON content entry) with `Components.lookup`, which follows a
-chain of component-to-component references to a concrete value and reports a cycle among them as
+each response, the request body, and a JSON content entry), following a chain of
+component-to-component references to a concrete value and reporting a cycle among them as
 unresolvable. It SHALL NOT dereference the document as a whole.
 
 #### Scenario: a parameter declared by reference
@@ -137,7 +137,7 @@ operation's declared parameters.
 
 #### Scenario: a header parameter
 - **WHEN** `summariseTask` declares `{ name: X-Request-Id, in: header }`
-- **THEN** it is recorded with location `header`, read through `input.headers`
+- **THEN** it is recorded with location `header`, read through the `Input`'s `headers`
 
 #### Scenario: a cookie parameter
 - **WHEN** an operation declares `{ name: session, in: cookie }`
@@ -178,7 +178,7 @@ https://github.com/swift-wire/wire-open-api/issues/93.
 
 #### Scenario: an anonymous operation
 - **WHEN** `/health` declares `get:` with no `operationId`
-- **THEN** no route is derived for it and no controller can mark it, while swift-openapi-generator makes up the id `get/health` and still emits an `APIProtocol` requirement for it, which the emitted `Conformer` has no method for, so the build fails with a conformance error in generated code
+- **THEN** no route is derived for it and no controller can mark it, while swift-openapi-generator makes up the id `get/health` and still emits an `APIProtocol` requirement for it, which the group's `APIProtocol` conformer has no method for, so the build fails with a conformance error in generated code
 
 Pinned by: nothing yet.
 
