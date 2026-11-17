@@ -6,7 +6,7 @@ The two ways a controller method implements an OpenAPI operation, and what WireO
 about each against the document. `@RawOperation` hands the method the generated `Input` and takes
 back its `Output`; `@Operation` binds each parameter from the `Input` member the document places it
 in, or from the request scope for a graph-aware binding, and wraps the return value in the response
-the document declares. Both are forwarded to from one generated `Conformer`, and every operation the
+the document declares. Both are forwarded to from the group's one generated `APIProtocol` conformer, and every operation the
 document declares must be implemented by exactly one marked method.
 
 Rationale: [WireOpenAPIAdvanced](../../../Documentation/Notes/WireOpenAPIAdvanced.md).
@@ -41,8 +41,8 @@ WireOpenAPIGen SHALL take a method's operationId from the string literal passed 
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `openapi` assertion). The declared form is pinned by nothing yet.
 
 ### Requirement: The conformer names the requirement from the operationId and forwards to the method
-The conformer SHALL implement the `APIProtocol` requirement named
-`GeneratorSafeNames.swiftMemberName(for: operationID, strategy:)` and forward it to the method by
+The conformer SHALL implement the `APIProtocol` requirement named by the member name
+[generator-naming](../generator-naming/spec.md) derives from the operationId, and forward it to the method by
 the method's own name.
 
 #### Scenario: a renamed method under the defensive strategy
@@ -55,7 +55,7 @@ Pinned by: `.github/workflows/build.yml` (`Fixtures` job, `Build` step) for meth
 The route terminal SHALL call the server's `<methodName>(request:body:metadata:)` with the
 author's method name, while `UniversalServer` names its per-operation methods from the operationId.
 A declared-form method therefore builds only when its name equals
-`GeneratorSafeNames.swiftMemberName(for: operationID, strategy:)`; a renamed method fails to compile,
+the member name [generator-naming](../generator-naming/spec.md) derives from the operationId; a renamed method fails to compile,
 which is tracked as a defect in https://github.com/swift-wire/wire-open-api/issues/63.
 
 #### Scenario: a renamed method
@@ -99,8 +99,8 @@ Pinned by: nothing yet.
 For a `@Path`, `@Query` or `@Header` parameter, the documented name SHALL be the attribute's string
 literal argument when given and the parameter's own name otherwise. The forwarder SHALL read it from
 the `Input`'s `path`, `query` or `headers` member, according to the
-`in:` the document declares for that name, as the member named
-`GeneratorSafeNames.swiftMemberName(for: documentedName, strategy:)`.
+`in:` the document declares for that name, as the member name
+[generator-naming](../generator-naming/spec.md) derives from the documented name.
 
 #### Scenario: all three locations under renamed parameters
 - **WHEN** `summariseTask(@Path id: String, @Query("include-done") includeDone: Bool?, @Header("X-Request-Id") requestID: String?)`, declared at `GET /api/v1/tasks/{id}/summary`, returns a `Task` titled `summary of task-<id> done=<includeDone ?? false> req=<requestID ?? "-">` and is called with `GET /api/v1/tasks/9/summary?include-done=true` and `X-Request-Id: abc123`
@@ -201,7 +201,7 @@ SHALL be refused when the document declares zero or several with
 `error: '<id>' documents <n> success responses (<cases>), so which one the handler returns cannot be inferred. Name it with @JSONResponse(status:) or @ResponseStatus(_:).`
 (`no` in place of `<n>`, and no parenthesised list, when there are none). A status named with
 `@JSONResponse(status:)` or `@ResponseStatus(_:)` SHALL be matched against the document's responses
-by `GeneratorStatusNames.safeName(for:)`, and one the document does not declare SHALL be refused with
+by the status case name [generator-naming](../generator-naming/spec.md) derives, and one the document does not declare SHALL be refused with
 `error: @JSONResponse(status: .<name>) on '<id>' names a status the document does not declare. It declares <code> (.<case>), ….`
 The message SHALL say `@JSONResponse(status:)` whichever of the two annotations named the status,
 which is tracked as a defect in https://github.com/swift-wire/wire-open-api/issues/89.
@@ -251,8 +251,8 @@ Pinned by: nothing yet.
 
 ### Requirement: Generated names follow the document's naming strategy
 WireOpenAPIGen SHALL spell every generated symbol it names (the conformer's requirement, the
-`Operations.<X>` namespace of a typed operation, and each `Input` member) with
-`GeneratorSafeNames` under the `namingStrategy` read from the `openapi-generator-config.yaml` passed
+`Operations.<X>` namespace of a typed operation, and each `Input` member) as
+[generator-naming](../generator-naming/spec.md) derives it under the `namingStrategy` read from the `openapi-generator-config.yaml` passed
 for that document, and SHALL use `GeneratorNamingStrategy.generatorDefault`, which is `.defensive`,
 when no config is passed, the key is absent, or its value is not a known strategy.
 
