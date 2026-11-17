@@ -115,7 +115,7 @@ Pinned by: `Sources/WireOpenAPIGen/main.swift` (`proxyTypeName(for:)`), `.github
 ### Requirement: The witness reads the proxy's subject fields by the subject-count rule
 The emitted witness SHALL read an app-scoped subject from `self._wireSubject` and enter a
 request-scoped subject's scope through `self._wireEnterScope` with the request when the group holds one
-controller, and from `self._wireSubject_<TypeName>` and `self._wireEnterScope_<TypeName>(request)`
+controller, and from `self._wireSubject_<TypeName>` and `self._wireEnterScope_<TypeName>`
 when it holds more than one.
 
 #### Scenario: a group of three
