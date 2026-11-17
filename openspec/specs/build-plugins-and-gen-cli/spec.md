@@ -185,7 +185,7 @@ Pinned by: `Sources/DiagnosticGoldenTool/diagnostics-golden.txt` (`accepted/per-
 
 ### Requirement: `DiagnosticGoldenTool --check` compares the table verbatim
 With `--check`, `DiagnosticGoldenTool` SHALL rebuild the table and compare it with
-`Sources/DiagnosticGoldenTool/diagnostics-golden.txt` byte for byte. On a difference it SHALL write
+its golden file, `diagnostics-golden.txt`, byte for byte. On a difference it SHALL write
 `WireOpenAPIGen no longer answers diagnostics-golden.txt as recorded.` with a `was:`/`now:` pair for
 each line of the rebuilt table that differs from the golden line at the same index, and exit 1.
 Golden lines beyond the rebuilt table's length are not listed, which is tracked in
@@ -204,14 +204,14 @@ among `WireOpenAPIGen` beside its own binary, `.build/out/Products/Debug`, `.bui
 `.build/release`, `Fixtures/.build/out/Products/Debug` and `Fixtures/.build/debug`. When
 `WIRE_OPENAPI_GEN_PATH` is unset and none of the candidates exists it SHALL fail with a message
 beginning `cannot find a built WireOpenAPIGen. Build it first:`. When the binary it found among the
-candidates has an earlier modification time than any `.swift` file under `Sources/WireOpenAPIGen` it
+candidates has an earlier modification time than any of WireOpenAPIGen's `.swift` sources it
 SHALL fail with a message stating the binary `is older than Sources/WireOpenAPIGen` and naming
 `swift build --product WireOpenAPIGen`. A binary named by `WIRE_OPENAPI_GEN_PATH` SHALL be used as
 given, without either check, which is tracked as a possible defect in
 https://github.com/swift-wire/wire-open-api/issues/83.
 
 #### Scenario: a diagnostic edited without rebuilding
-- **WHEN** `Sources/WireOpenAPIGen/Diagnostics.swift` is saved after the last `swift build` and `swift run DiagnosticGoldenTool` is run with `WIRE_OPENAPI_GEN_PATH` unset
+- **WHEN** the WireOpenAPIGen source declaring its diagnostics is saved after the last `swift build` and `swift run DiagnosticGoldenTool` is run with `WIRE_OPENAPI_GEN_PATH` unset
 - **THEN** the tool exits 1 before running any case and does not rewrite the golden
 
 Pinned by: nothing yet.
