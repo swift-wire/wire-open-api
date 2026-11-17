@@ -53,25 +53,24 @@ come from the document's `servers:` block alone, applied by the runtime's
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `openapi` and `unprefixed` assertions).
 
 ### Requirement: The scanner records every marked struct, class and actor with its home module
-`ControllerScanner` SHALL visit `StructDeclSyntax`, `ClassDeclSyntax` and `ActorDeclSyntax` nodes
-and record each one carrying an attribute named exactly `OpenAPIController` as a
-`DiscoveredController` whose `homeModule` is the `--module` name its source file was passed under,
-whose `spec` is the value of the `spec:` argument when that argument is a plain string literal, and
-whose `seed` is the type named by `@Scoped(seed: S.self)` when present. Any other `spec:` expression,
-such as a constant or an interpolated literal, is recorded as no `spec`, so the controller is grouped
+WireOpenAPIGen SHALL recognise each struct, class and actor, nested ones included, carrying an
+attribute named exactly `OpenAPIController`, and record its home module (the `--module` name its
+source file was passed under), its `spec:` argument when that argument is a plain string literal, and
+its seed type when it carries `@Scoped(seed: S.self)`. Any other `spec:` expression, such as a
+constant or an interpolated literal, is recorded as no `spec:` module, so the controller is grouped
 as if bare with no diagnostic, which is tracked as a defect in
 https://github.com/swift-wire/wire-open-api/issues/81.
 
 #### Scenario: a public struct in a dependency module
 - **WHEN** the plugin passes `--module OrdersAPI OrderController.swift` and that file declares `@Scoped(seed: HTTPRequest.self) @OpenAPIController(spec: "OrdersAPI") public struct OrderController: Sendable`
-- **THEN** the discovered controller has `typeName == "OrderController"`, `homeModule == "OrdersAPI"`, `spec == "OrdersAPI"` and `seed == "HTTPRequest"`
+- **THEN** `OrderController` is grouped under `OrdersAPI` and is request-scoped with seed `HTTPRequest`
 
 Pinned by: `Fixtures/Sources/OrdersAPI/OrderController.swift` (built by the `Build` step of the `Fixtures` job in `.github/workflows/build.yml`). The `seed` reading is observed at runtime by the `scope: order trace for /api/v2/orders/7` log assertion of the same job.
 
 ### Requirement: The bare form means the document beside the controller
-WireOpenAPIGen SHALL group each controller under `controller.spec ?? controller.homeModule`. For a
-bare `@OpenAPIController()` the group is therefore the module the controller is declared in, not the
-module being compiled. When that group equals the compiling module the document is the one passed as
+WireOpenAPIGen SHALL group each controller under its `spec:` module when given, and its home module
+otherwise. For a bare `@OpenAPIController()` the group is therefore the module the controller is
+declared in, not the module being compiled. When that group equals the compiling module the document is the one passed as
 `--spec`; otherwise it is the one passed as `--spec-module <group> <document>`.
 
 #### Scenario: a bare controller in the compiling target
@@ -159,7 +158,7 @@ https://github.com/swift-wire/wire-open-api/issues/80.
 Pinned by: nothing yet.
 
 ### Requirement: A compiling target with controllers and no document is a build error
-When a group's document yields no operations, `diagnoseCoverage` SHALL write `<file>:<line>: error: @OpenAPIController needs the OpenAPI document to derive its routes, and none was passed (--spec).`
+When a group's document yields no operations, WireOpenAPIGen SHALL write `<file>:<line>: error: @OpenAPIController needs the OpenAPI document to derive its routes, and none was passed (--spec).`
 to standard error and exit with status 1. The same message is written whether no `--spec` was passed
 for the compiling module, the document path cannot be read, or the document declares no operations.
 
@@ -184,17 +183,17 @@ Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI
 
 ### Requirement: Generic controllers are accepted and their parameters renamed in the conformer
 WireOpenAPIGen SHALL accept a controller with a generic parameter clause, carry each parameter's
-inherited type into the conformer, and rename the parameters of the controller at index `i` in the
-group with the prefix `_wireC<i>`, so that two controllers each declaring `Store` do not collide.
+inherited type into the conformer, and rename each controller's parameters apart in the conformer,
+so that two controllers each declaring `Store` compile in one group.
 
 #### Scenario: two controllers both generic over `Store`
 - **WHEN** the request-scoped `TaskController<Store: TaskStoring>` and the app-scoped `TaskListController<Store: TaskStoring>` share a group, discovered in that order
-- **THEN** the conformer is declared `struct Conformer<_wireC0Store: TaskStoring, _wireC1Store: TaskStoring>: APIProtocol` and holds `_wireSubject_TaskController: TaskController<_wireC0Store>?` and `_wireSubject_TaskListController: TaskListController<_wireC1Store>`
+- **THEN** the target builds
 
 Pinned by: `Sources/WireOpenAPIGen/ConformerGenerics.swift` (`genericPrefix`, `conformerGenericClause`), `Fixtures/Sources/WireOpenAPIBootstrapExample/Controllers.swift` (built by the `Build` step of the `Fixtures` job in `.github/workflows/build.yml`).
 
 ### Requirement: A generic `where` clause on a controller is refused
-`rejectGenericWhereClauses` SHALL, for any controller in the group whose declaration carries a
+WireOpenAPIGen SHALL, for any controller in the group whose declaration carries a
 generic `where` clause, write
 `<file>:<line>: error: '<Type>' has a generic `where` clause, which the emitted conformer cannot reproduce: it renames the controller's generic parameters, and rewriting a clause that names them would mean editing constraint syntax by substitution. Write the constraint on the parameter itself instead — `<Store: TaskStoring>`.`
 to standard error and exit with status 1.
