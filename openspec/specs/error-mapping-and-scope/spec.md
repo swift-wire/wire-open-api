@@ -165,9 +165,9 @@ the catch-all last.`
 Pinned by: `Sources/DiagnosticGoldenTool/diagnostics-golden.txt` (`ordering/catch-all-is-not-last`).
 
 ### Requirement: Route scope folds inside controller scope, first match wins
-The forwarder SHALL emit one `catch` clause per error type in the order route-scope mappings then
-controller-scope mappings, dropping any later mapping of an error type already mapped, so a route-scope
-mapping wins over a controller-scope mapping of the same type.
+The forwarder SHALL try mappings in route-then-controller order, one per error type, the first match
+winning: any later mapping of an error type already mapped is dropped, so a route-scope mapping wins
+over a controller-scope mapping of the same type.
 
 #### Scenario: the same error at both scopes
 - **WHEN** `TaskListController` maps `NoSuchTask` to `.internalServerError`, its `summariseTask` (`GET /api/v1/tasks/{id}/summary`) maps `NoSuchTask` to `.notFound`, its `deleteTask` (`POST /api/v1/tasks/{id}/delete`) maps nothing and documents a 500, and both handlers throw `NoSuchTask` for the id `missing`
@@ -224,7 +224,8 @@ For a `@Scoped(seed:)` controller with controller-scope mappings, the generated 
 the scope through `WireOpenAPIRoutes.enteringScope` and, on failure, call `WireOpenAPIRoutes.refuse`
 with a closure built from the controller-scope mappings only. `refuse` SHALL try that closure, then
 `HTTPResponseConvertible`, and otherwise rethrow, without reading the request body. A controller with
-no controller-scope mappings SHALL enter the scope with a plain `try await`.
+no controller-scope mappings SHALL enter the scope without a refusal closure, so a failure propagates
+unanswered by mappings.
 
 #### Scenario: a binding that throws while the scope is built
 - **WHEN** the `@Scoped(seed: HTTPRequest.self)` `GatedTaskController` implements `gatedTask` (`GET /api/v1/tasks/{id}/gated`), maps `Unauthenticated` at controller scope with `{ _ in Components.Schemas.Problem(message: "no user") }`, and injects `RequestGate`, whose `init(seed:)` throws `Unauthenticated` without an `x-user` header; an app-wide `@Middleware` adds `x-served-by: wire-open-api` to every response; and `GET /api/v1/tasks/42/gated` arrives without an `x-user` header
