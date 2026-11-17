@@ -91,7 +91,7 @@ https://github.com/swift-wire/wire-open-api/issues/64.
 
 #### Scenario: an undeclared 500
 - **WHEN** `opA` documents only 200 and declares `@ErrorResponse(Gone.self, .internalServerError)`
-- **THEN** WireOpenAPIGen reports nothing for the mapping, and the forwarder's `catch is Gone` clause returns `.internalServerError(.init())`, which the operation's generated `Output` does not declare
+- **THEN** WireOpenAPIGen reports nothing for the mapping, and the forwarder answers `Gone` with `.internalServerError(.init())`, which the operation's generated `Output` does not declare
 
 Pinned by: `Sources/DiagnosticGoldenTool/diagnostics-golden.txt` (`route-scope/status-not-declared`). The `.internalServerError` exemption is pinned by nothing yet.
 
