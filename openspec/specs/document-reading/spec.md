@@ -26,9 +26,9 @@ operations are derived and served the same way.
 
 Pinned by: nothing yet.
 
-### Requirement: OpenAPI 3.1 and 3.2 documents are decoded by OpenAPIKit
-For `openapi:` values `3.1.0`, `3.1.1`, `3.1.2` and `3.2.0`, WireOpenAPIGen SHALL decode the
-document directly as an `OpenAPIKit.OpenAPI.Document`.
+### Requirement: OpenAPI 3.1 and 3.2 documents are accepted
+For `openapi:` values `3.1.0`, `3.1.1`, `3.1.2` and `3.2.0`, WireOpenAPIGen SHALL accept the
+document and read it as written, with no conversion.
 
 #### Scenario: two 3.1.0 documents in one app
 - **WHEN** an app's own document and a dependency's document, each implemented by an `@OpenAPIController`, both declare `openapi: 3.1.0`
@@ -59,7 +59,7 @@ to standard error and exit with status 1.
 Pinned by: nothing yet.
 
 ### Requirement: A document the model cannot decode is a build error
-When OpenAPIKit or OpenAPIKit30 throws while decoding a document of a supported version,
+When a document of a supported version fails to decode,
 WireOpenAPIGen SHALL write `<document>: error: the OpenAPI document could not be read: <error>` to
 standard error and exit with status 1.
 
