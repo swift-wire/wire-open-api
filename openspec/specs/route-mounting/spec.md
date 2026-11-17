@@ -17,8 +17,8 @@ Documentation: [ServingTheRoutes](../../../Sources/WireOpenAPI/WireOpenAPI.docc/
 
 ### Requirement: Each group's proxy gains a `RouteContributor` witness
 For each group WireOpenAPIGen SHALL emit `extension _WireOpenAPIContributor_<Group>: RouteContributor`
-declaring `func registerWireRoutes<Builder: HTTPServerRouteBuilder>(on builder: inout Builder, coding wireMVCAppCoding: WireMVCCoding) throws`
-constrained by `Builder.RequestContext: ~Copyable & SendableMetatype & ResponseHeaderCarrying`,
+declaring the throwing `registerWireRoutes(on:coding:)`, generic over `Builder: HTTPServerRouteBuilder`,
+taking `inout Builder` and `WireMVCCoding`, constrained by `Builder.RequestContext: ~Copyable & SendableMetatype & ResponseHeaderCarrying`,
 `Builder.Reader: ~Copyable`, `Builder.ResponseSender: ~Copyable` and
 `Builder.ResponseSender.Writer: ~Copyable`. Groups SHALL be emitted in ascending order of group name,
 each preceded by its conformer namespace.
@@ -43,9 +43,9 @@ SHALL NOT by itself add an import; the plugins pass `--import` for each such mod
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, `Build` step).
 
 ### Requirement: One `UniversalServer` template is built per document at registration
-`registerWireRoutes` SHALL construct `let wireOpenAPIServerTemplate = UniversalServer(handler:configuration:)`
+`registerWireRoutes` SHALL construct one `UniversalServer(handler:configuration:)` per document,
 once, before any registration, passing the template conformer as `handler` and
-`Configuration(wireMVCCoding: wireMVCAppCoding)` as `configuration`, so the app's coding reaches
+`Configuration(wireMVCCoding:)` over the coding it was given as `configuration`, so the app's coding reaches
 every operation of the document. The template conformer SHALL hold each app-scoped controller from
 the proxy's subject field and `nil` for each request-scoped one.
 
@@ -89,10 +89,10 @@ Pinned by: nothing yet.
 
 ### Requirement: Every implemented operation is registered at its prefixed path, in operationId order
 For each operationId the document declares and a controller in the group implements, in ascending
-operationId order, the witness SHALL open a `do` block, compute
-`let wireOpenAPIPath = try wireOpenAPIServerTemplate.apiPathComponentsWithServerPrefix("<paths key>")`,
-and call `builder.register(method: .<method>, path: wireOpenAPIPath)` with the document's HTTP method
-lower-cased.
+operationId order, the witness SHALL register the operation with `builder.register(method:path:)` at
+the path the template's `apiPathComponentsWithServerPrefix(_:)` gives for its paths key, composed once
+at registration, with the document's HTTP method lower-cased. When composing the path throws, the
+error SHALL propagate out of `registerWireRoutes(on:coding:)`.
 
 #### Scenario: the prefixed path serves and the bare one does not
 - **WHEN** the Tasks document declares `servers: [{url: /api/v1}]` and `paths: /tasks/{id}` for `getTask`
@@ -116,13 +116,13 @@ Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI
 
 ### Requirement: The fold is the owning controller's `@Middleware`, then the operation's
 When the owning controller or the operation declares `@Middleware`, the registration SHALL build a
-`RequestResponseMiddlewareBox.pending` over the courier's `base`, carrying
-`RouteContext(template: wireOpenAPIPath, pathParameters: parameters)` and the courier's response
-headers, and run it through `wireCompose { … }` whose entries are the declaring controller's
+`RequestResponseMiddlewareBox.pending` over the courier's `base`, carrying a `RouteContext` of the
+prefixed path template and the request's path parameters, and the courier's response headers, and run it through `wireCompose { … }` whose entries are the declaring controller's
 `@Middleware` arguments in source order followed by the method's. An argument `T.self` SHALL read
-`self._wire<T>` by `dependencyPropertyName(forType:)`, and any other argument SHALL read
+`self._wire<T>`, where `<T>` is the type's simple name, stripped of generic arguments and module or
+namespace qualifiers, with its first letter upper-cased, and any other argument SHALL read
 `self._wireFactory_<key>.create(Builder.RequestContext.Base.self, Builder.Reader.self, Builder.ResponseSender.self)`
-with `<key>` sanitised by `sanitizedKeyFragment`. A registration with no entries SHALL build no box.
+with every character of `<key>` that is not a letter or digit replaced by `_`. A registration with no entries SHALL build no box.
 
 #### Scenario: controller scope and route scope
 - **WHEN** `TaskController`, implementing `getTask` at `GET /api/v1/tasks/{id}`, carries `@Middleware(RequireAPIKeyKeys.factory)`, and `listTasks` (`GET /api/v1/tasks`) on `TaskListController` carries `@Middleware(AuditKeys.factory)`, where `RequireAPIKey` logs `apikey: <method> <path>` for each request it folds around and `Audit` logs `audit: <path>`
@@ -145,10 +145,9 @@ implements that operation, not from other controllers in the group or in another
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `controller-scope @Middleware leaked between controllers sharing a spec` and `@Middleware leaked from one spec to another` checks).
 
 ### Requirement: The response goes out through the courier's header registry
-Each registration SHALL take the courier's contents with `requestContext.takeContents()` and its
-registry with `responseHeaders.take()` (through `withPendingContents` when there is a fold), and every
-send SHALL be through `ResponseHeaderApplyingSender(wrapping: sender, registry: wireOpenAPIRegistry)`,
-so header contributions from middleware reach an operation's response.
+Each registration SHALL take the courier's contents with `takeContents()` and its header registry
+(through `withPendingContents` when there is a fold), and SHALL send every response through a
+`ResponseHeaderApplyingSender` over that registry, so header contributions from middleware reach an operation's response.
 
 #### Scenario: a global middleware's header
 - **WHEN** a global `@Middleware` adds `x-served-by: wire-open-api`, the app serves an operation at `GET /api/v1/tasks/{id}` and a `@Get` route at `GET /status/tasks`, and `GET /api/v1/tasks/42/gated` is refused `401` by a controller-scope mapping when its controller's request scope fails to build
@@ -158,7 +157,7 @@ Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI
 
 ### Requirement: The terminal dispatches through `WireOpenAPIRoutes.invoke`
 The route terminal SHALL call `WireOpenAPIRoutes.invoke(handler:request:pathParameters:reader:sender:rejectionResponse:operationID:)`
-with a `@Sendable` handler that calls `wireOpenAPIServer.<method>(request:body:metadata:)`, where
+with a `@Sendable` handler that calls the server's `<method>(request:body:metadata:)`, where
 `<method>` is the implementing controller method's own name, and with `operationID:` the operation's
 id. That call resolves only when the method's name equals the `UniversalServer` member the generator
 names from the operationId (`GeneratorSafeNames.swiftMemberName(for:strategy:)`); a renamed
@@ -168,7 +167,7 @@ defect in https://github.com/swift-wire/wire-open-api/issues/63. `invoke` SHALL 
 
 #### Scenario: a request-scoped operation
 - **WHEN** `GET /api/v1/tasks/42` is served by the request-scoped `TaskController`'s `getTask` method, which implements `getTask` at `GET /api/v1/tasks/{id}`
-- **THEN** the terminal calls `wireOpenAPIServer.getTask(request:body:metadata:)` inside `WireOpenAPIRoutes.invoke`, and the response is `200`
+- **THEN** the terminal calls the server's `getTask(request:body:metadata:)` inside `WireOpenAPIRoutes.invoke`, and the response is `200`
 
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `openapi` assertion).
 
@@ -185,8 +184,8 @@ body with `WireMVCRequest.collectBody(_:maximumSize:)` and the response body wit
 Pinned by: nothing yet.
 
 ### Requirement: An app-scoped controller's operation uses the template as is
-When the implementing controller has no `@Scoped(seed:)`, the terminal SHALL bind
-`let wireOpenAPIServer = wireOpenAPIServerTemplate` and enter no scope, even when another controller
+When the implementing controller has no `@Scoped(seed:)`, the terminal SHALL dispatch through the
+template unchanged and enter no scope, even when another controller
 in the group is request-scoped.
 
 #### Scenario: an app-scoped operation beside a scoped one
@@ -196,11 +195,10 @@ in the group is request-scoped.
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, both `an app-scoped controller's operation entered a request scope` checks).
 
 ### Requirement: A scoped controller enters only its own scope and re-points a copy of the template
-When the implementing controller has `@Scoped(seed:)`, the terminal SHALL call
-`self._wireEnterScope[_<Controller>](request)`, bind `wireOpenAPIEntry._wireSubject` and
-`wireOpenAPIEntry._wireScopeTeardown`, copy the template into `var wireOpenAPIRebound`, set its
-`handler` to a conformer holding that subject in the controller's field, the app-scoped subjects from
-the proxy and `nil` for every other request-scoped field, and dispatch through the copy. It SHALL
+When the implementing controller has `@Scoped(seed:)`, the terminal SHALL enter the scope through
+`self._wireEnterScope[_<Controller>](request)`, take the entry's `_wireSubject` and
+`_wireScopeTeardown`, and dispatch through a copy of the template whose `handler` is re-pointed at a conformer holding that subject in the controller's field, the app-scoped subjects from
+the proxy and `nil` for every other request-scoped field. It SHALL
 NOT construct a new `UniversalServer` per request.
 
 #### Scenario: the subject follows the request
@@ -214,8 +212,8 @@ NOT construct a new `UniversalServer` per request.
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `openapi`, `other`, `order` and `order2` assertions and the `scope log` checks).
 
 ### Requirement: Scope teardown runs after the response and on a throw
-A scoped terminal SHALL wrap the `invoke` call in `do`/`catch`, call `_ = await wireOpenAPITeardown()`
-and rethrow when it throws, and call `_ = await wireOpenAPITeardown()` after it returns.
+A scoped terminal SHALL run the scope's teardown after `invoke` returns, and, when `invoke` throws,
+before rethrowing the error.
 
 #### Scenario: a handler that throws
 - **WHEN** a request-scoped operation's `invoke` throws an error no tier answers
@@ -224,8 +222,8 @@ and rethrow when it throws, and call `_ = await wireOpenAPITeardown()` after it 
 Pinned by: nothing yet.
 
 ### Requirement: The conformer lives in a per-document namespace
-Each group's `Conformer` SHALL be declared inside `enum _WireOpenAPISpec_<Group>`, with `<Group>`
-sanitised by `sanitizedKeyFragment`. When the
+Each group's `Conformer` SHALL be declared inside `enum _WireOpenAPISpec_<Group>`, with every
+character of `<Group>` that is not a letter or digit replaced by `_`. When the
 document belongs to another module `M`, the namespace SHALL first declare
 `typealias APIProtocol = M.APIProtocol`, `typealias Components = M.Components`,
 `typealias Operations = M.Operations` and `typealias Servers = M.Servers`; for the compiling
