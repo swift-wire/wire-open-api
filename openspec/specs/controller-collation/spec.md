@@ -188,9 +188,9 @@ so that two controllers each declaring `Store` compile in one group.
 
 #### Scenario: two controllers both generic over `Store`
 - **WHEN** the request-scoped `TaskController<Store: TaskStoring>` and the app-scoped `TaskListController<Store: TaskStoring>` share a group, discovered in that order
-- **THEN** the target builds
+- **THEN** the target builds, and both controllers' operations serve: `GET /api/v1/tasks/42` (`TaskController`'s `getTask`) and `GET /api/v1/tasks` (`TaskListController`'s `listTasks`) both answer `200`
 
-Pinned by: `Sources/WireOpenAPIGen/ConformerGenerics.swift` (`genericPrefix`, `conformerGenericClause`), `Fixtures/Sources/WireOpenAPIBootstrapExample/Controllers.swift` (built by the `Build` step of the `Fixtures` job in `.github/workflows/build.yml`).
+Pinned by: `Sources/WireOpenAPIGen/ConformerGenerics.swift` (`genericPrefix`, `conformerGenericClause`), `Fixtures/Sources/WireOpenAPIBootstrapExample/Controllers.swift` (built by the `Build` step of the `Fixtures` job in `.github/workflows/build.yml`), `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `openapi` and `list` assertions).
 
 ### Requirement: A generic `where` clause on a controller is refused
 WireOpenAPIGen SHALL, for any controller in the group whose declaration carries a
@@ -205,13 +205,13 @@ to standard error and exit with status 1.
 Pinned by: nothing yet.
 
 ### Requirement: The controller does not declare `APIProtocol` conformance
-A controller SHALL NOT need to conform to `APIProtocol`. The conformance SHALL be carried by the
-generated `Conformer` struct inside the spec's namespace, which forwards each operation to the
-controller that declared it.
+A controller SHALL NOT need to conform to `APIProtocol`. The conformance SHALL be carried by a struct
+WireOpenAPIGen emits for the group, the group's `APIProtocol` conformer, which forwards each
+operation to the controller that declared it.
 
 #### Scenario: controllers declared without the conformance
 - **WHEN** `TaskController`, `TaskListController`, `GatedTaskController`, `OrderController` and `OrderSummaryController`, which between them implement every operation of the Tasks and Orders documents, are declared with no `: APIProtocol` clause
-- **THEN** their targets build, so the generated `Conformer` of each document satisfies `APIProtocol`
+- **THEN** their targets build, so each group's `APIProtocol` conformer satisfies `APIProtocol`
 
 Pinned by: `Fixtures/Sources/WireOpenAPIBootstrapExample/Controllers.swift`, `Fixtures/Sources/OrdersAPI/OrderController.swift` (built by the `Build` step of the `Fixtures` job in `.github/workflows/build.yml`).
 
