@@ -3,9 +3,8 @@
 ## Purpose
 
 How wire-mvc's `@ErrorResponse` applies to OpenAPI operations, and how a failure entering a request
-scope is answered. WireOpenAPIGen checks each mapping against the document, emits the mappings as
-`catch` clauses in the operation's forwarder so a mapped error is answered as one of the document's own
-responses, and hands the mappings only matchable outside the forwarder to the terminal in
+scope is answered. WireOpenAPIGen checks each mapping against the document, applies the mappings in
+the operation's forwarder so a mapped error is answered as one of the document's own responses, and hands the mappings only matchable outside the forwarder to the terminal in
 `WireOpenAPIRoutes`. The wire-mvc tier model and request-scope model are specified in wire-mvc and
 linked below; this spec states the OpenAPI adaptation.
 
