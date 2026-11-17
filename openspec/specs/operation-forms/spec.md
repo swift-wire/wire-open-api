@@ -27,7 +27,7 @@ decided by WireOpenAPIGen reading the source, not by the macro.
 Pinned by: `Sources/WireOpenAPI/OpenAPIController.swift` (the macro declarations), `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `list` assertion), `Tests/WireOpenAPIMacrosTests/OpenAPIControllerMacroTests.swift` (`testMarkerExpandsToNothing`, which pins that `OpenAPIControllerMacro` expands to nothing when attached as `@OpenAPIController` to a struct). No test attaches an operation marker to a method, so the empty expansion of the markers themselves is pinned by nothing yet.
 
 ### Requirement: The bare marker takes the method name as the operationId
-`ControllerScanner` SHALL take a method's operationId from the string literal passed to
+WireOpenAPIGen SHALL take a method's operationId from the string literal passed to
 `@RawOperation(_:)` or `@Operation(_:)` when one is given, and from the method's own name otherwise.
 
 #### Scenario: the bare form
@@ -47,12 +47,12 @@ the method's own name.
 
 #### Scenario: a renamed method under the defensive strategy
 - **WHEN** a controller declares `@RawOperation("get-task") func fetch(_ input: Operations.get_hyphen_task.Input) async throws -> Operations.get_hyphen_task.Output` under the `defensive` strategy
-- **THEN** the conformer declares `func get_hyphen_task(_ input: Operations.get_hyphen_task.Input) async throws -> Operations.get_hyphen_task.Output`, and its body calls `fetch(input)`
+- **THEN** the conformer implements `get_hyphen_task(_:)` taking `Operations.get_hyphen_task.Input` and returning `Operations.get_hyphen_task.Output`, and forwards to `fetch`
 
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, `Build` step) for methods whose name is the operationId. A renamed method is pinned by nothing yet.
 
 ### Requirement: The route terminal calls the generated server method by the method's own name
-The route terminal SHALL call `wireOpenAPIServer.<methodName>(request:body:metadata:)` with the
+The route terminal SHALL call the server's `<methodName>(request:body:metadata:)` with the
 author's method name, while `UniversalServer` names its per-operation methods from the operationId.
 A declared-form method therefore builds only when its name equals
 `GeneratorSafeNames.swiftMemberName(for: operationID, strategy:)`; a renamed method fails to compile,
@@ -60,7 +60,7 @@ which is tracked as a defect in https://github.com/swift-wire/wire-open-api/issu
 
 #### Scenario: a renamed method
 - **WHEN** a controller declares `@RawOperation("get-task") func fetch(_ input: Operations.get_hyphen_task.Input) async throws -> Operations.get_hyphen_task.Output` under the `defensive` strategy
-- **THEN** the generated terminal calls `wireOpenAPIServer.fetch(request:body:metadata:)`, `UniversalServer` declares only `get_hyphen_task(request:body:metadata:)`, and the build fails
+- **THEN** the generated terminal calls the server's `fetch(request:body:metadata:)`, `UniversalServer` declares only `get_hyphen_task(request:body:metadata:)`, and the build fails
 
 Pinned by: nothing yet.
 
@@ -97,9 +97,9 @@ Pinned by: nothing yet.
 
 ### Requirement: The document decides where a bound parameter is read from
 For a `@Path`, `@Query` or `@Header` parameter, the documented name SHALL be the attribute's string
-literal argument when given and the parameter's own name otherwise. The forwarder SHALL read it as
-`input.<location>.<member>`, where `<location>` is `path`, `query` or `headers` according to the
-`in:` the document declares for that name, and `<member>` is
+literal argument when given and the parameter's own name otherwise. The forwarder SHALL read it from
+the `Input`'s `path`, `query` or `headers` member, according to the
+`in:` the document declares for that name, as the member named
 `GeneratorSafeNames.swiftMemberName(for: documentedName, strategy:)`.
 
 #### Scenario: all three locations under renamed parameters
@@ -114,7 +114,7 @@ Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI
 
 ### Requirement: An annotation contradicting the document's location is an error
 When a bound parameter's annotation, lower-cased, differs from the `in:` the document declares for
-its name, `diagnoseTypedBindings` SHALL write
+its name, WireOpenAPIGen SHALL write
 `error: @Operation '<id>' annotates '<name>' as @<Binding>, but the document puts it in <location>. The document decides where a parameter lives; the annotation only says which one this is.`
 and exit with status 1.
 
@@ -126,7 +126,7 @@ Pinned by: nothing yet.
 
 ### Requirement: A bound name the document does not declare is an error listing the declared ones
 When no document parameter of the operation has a bound parameter's documented name,
-`diagnoseTypedBindings` SHALL write
+WireOpenAPIGen SHALL write
 `error: @Operation '<id>' binds '<name>', which the document does not declare. It declares <list>. Name the documented parameter — @<Binding>("the-name") — if the Swift name differs.`
 and exit with status 1, where `<list>` is the declared parameters as `'<name>' (<location>)`,
 sorted and comma-separated, or `no parameters` when there are none.
@@ -183,8 +183,7 @@ A `@JSONBody` parameter's type SHALL end in `?` exactly when the document's `req
 `error: '<id>' documents a required request body, but its handler takes <Type>. Drop the optionality.`,
 and an optional body bound non-optionally with
 `error: '<id>' documents an optional request body, but its handler takes <Type>. Make it optional — the document does not promise one will arrive.`
-The forwarder SHALL unwrap `input.body` with a `switch` whose `.json` case yields the value, adding a
-`.none` case yielding `nil` for an optional body.
+The forwarder SHALL pass the handler the JSON body's value, or `nil` when an optional body is absent.
 
 #### Scenario: an optional body present
 - **WHEN** `replaceTask(@Path id: String, @Query("title") title: String, @JSONBody draft: Components.Schemas.Task?)`, declared at `POST /api/v1/tasks/{id}/replace` with an optional `requestBody` and carrying `@JSONResponse(status: .created)`, returns a `Task` titled `<title> from <draft?.id ?? "nothing">` and is called with body `{"id":"B9","title":"x"}` and `title=renamed`
@@ -259,7 +258,7 @@ when no config is passed, the key is absent, or its value is not a known strateg
 
 #### Scenario: the idiomatic strategy
 - **WHEN** the document's config declares `namingStrategy: idiomatic` and `summariseTask` binds `@Header("X-Request-Id") requestID: String?`
-- **THEN** the forwarder reads `input.headers.xRequestId`, and a request carrying `X-Request-Id: abc123` reaches the handler with `requestID` equal to `abc123`
+- **THEN** the forwarder reads the `Input`'s `headers.xRequestId`, and a request carrying `X-Request-Id: abc123` reaches the handler with `requestID` equal to `abc123`
 
 #### Scenario: no strategy declared
 - **WHEN** the config omits `namingStrategy`
@@ -270,16 +269,17 @@ Pinned by: `Tests/WireOpenAPINamingTests/GeneratorSafeNamesTests.swift` (`genera
 ### Requirement: A graph-aware binding is resolved by its worker inside the forwarder
 A parameter attribute naming a type declared anywhere in the scanned sources with
 `@RequestBinding(Worker.self, …)` SHALL be treated as scope-resolved: it SHALL be excused from the
-document's parameter checks, the conformer SHALL carry optional fields `_wireWorker_<Worker>`,
-`_wireRequest: HTTPRequest?` and `_wirePathParameters: [String: Substring]?`, and the forwarder SHALL
+document's parameter checks, the conformer SHALL carry, as optionals, the worker, the request and its
+path parameters, and the forwarder SHALL
 bind it, before calling the handler and inside the `do` the `@ErrorResponse` catches wrap, with
 `try await <worker>.bind(name: "<documentedName>", request:, pathParameters:, body: nil)`. A
-per-request conformer SHALL fill the worker field from `wireOpenAPIEntry.<field>`, where `<field>` is
-`scopeYieldFieldName(forType: Worker)`, only for workers the owning controller's own operations name.
+per-request conformer SHALL fill the worker from the scope entry's field swift-wire names for that
+worker (the lower-cameled type name, with `<` spelt `Of`, `,` spelt `And`, the letter after either
+upper-cased, and every other character but letters, digits and `_` dropped), only for workers the owning controller's own operations name.
 
 #### Scenario: a worker beside a documented parameter
 - **WHEN** `TaskController` declares `@Operation @ErrorResponse(TaskForbidden.self, .forbidden) func authorizedTask(@Path id: String, @AuthorizedTask("read") task: Components.Schemas.Task)` and `AuthorizedTask` carries `@RequestBinding(TaskAuthorizer.self)`
-- **THEN** the forwarder calls `bind(name: "read", …)` on `_wireWorker_TaskAuthorizer`, the per-request conformer fills it from `wireOpenAPIEntry.taskAuthorizer`, and the target builds
+- **THEN** the forwarder binds `task` through `TaskAuthorizer` with `bind(name: "read", …)`, taking the worker from the scope entry's `taskAuthorizer`, and the target builds
 
 Pinned by: `Fixtures/Sources/WireOpenAPIBootstrapExample/Controllers.swift` (`authorizedTask`), `Fixtures/Sources/WireOpenAPIBootstrapExample/AuthorizedTaskBinding.swift` (built by the `Build` step of the `Fixtures` job in `.github/workflows/build.yml`). No probe calls `authorizedTask` at runtime.
 
@@ -300,7 +300,7 @@ Each SHALL exit with status 1.
 Pinned by: nothing yet.
 
 ### Requirement: Every declared operation must be implemented
-After its other checks, `diagnoseCoverage` SHALL collect the operationIds the document declares that
+After its other checks, WireOpenAPIGen SHALL collect the operationIds the document declares that
 no marked method in the group implements, sorted, and when any remain SHALL write
 `error: every operation the document declares must be implemented, and <ids> <is|are> not. Mark the <method that implements it|methods that implement them> with @Operation or @RawOperation.`
 and exit with status 1.
@@ -315,7 +315,7 @@ Pinned by: nothing yet.
 When a marked method's operationId is not declared by the document, WireOpenAPIGen SHALL write
 `error: '<method>' is marked as operation '<id>', which the document does not declare. It declares '<a>', '<b>'.`
 over the sorted operationIds, and exit with status 1. A document declaring no operations never
-reaches this check: `diagnoseCoverage` refuses it first with
+reaches this check: WireOpenAPIGen refuses it first with
 `error: @OpenAPIController needs the OpenAPI document to derive its routes, and none was passed (--spec).`,
 which is tracked as a defect in https://github.com/swift-wire/wire-open-api/issues/88.
 
