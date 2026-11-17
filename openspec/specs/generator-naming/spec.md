@@ -170,9 +170,9 @@ standard error.
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Check the naming golden table against the real generator`).
 
 ### Requirement: The transcribed files carry the upstream attribution
-`Sources/WireOpenAPINaming/GeneratorSafeNames.swift` and `Sources/WireOpenAPINaming/GeneratorStatusNames.swift`
-SHALL carry the SwiftOpenAPIGenerator copyright line above this project's own and name the upstream
-file each transcribes, and `NOTICE` SHALL list both files with those upstream sources.
+The `WireOpenAPINaming` sources declaring `GeneratorSafeNames` and `GeneratorStatusNames`, transcribed
+from upstream's `SafeNameGenerator.swift` and `HTTPStatusCodes.swift`, SHALL carry the
+SwiftOpenAPIGenerator copyright line above this project's own and name the upstream file each transcribes, and `NOTICE` SHALL list both files with those upstream sources.
 
 #### Scenario: the licence-header check
 - **WHEN** the `LicenceHeaders` job runs `Scripts/check-license-headers.sh`
@@ -181,8 +181,8 @@ file each transcribes, and `NOTICE` SHALL list both files with those upstream so
 Pinned by: `.github/workflows/build.yml` (`LicenceHeaders` job, the SPDX and project copyright lines). The upstream attribution and `NOTICE` entries are pinned by nothing yet.
 
 ### Requirement: The transcribed files are exempt from SwiftLint and swift-format
-`Sources/WireOpenAPINaming/GeneratorSafeNames.swift` and `Sources/WireOpenAPINaming/GeneratorStatusNames.swift`
-SHALL be listed under `excluded:` in `.swiftlint.yml` and SHALL begin with `// swift-format-ignore-file`,
+The `WireOpenAPINaming` sources declaring `GeneratorSafeNames` and `GeneratorStatusNames` SHALL be
+listed under `excluded:` in `.swiftlint.yml` and SHALL begin with `// swift-format-ignore-file`,
 so neither tool rewrites or reports on their upstream formatting.
 
 #### Scenario: the lint and format jobs
