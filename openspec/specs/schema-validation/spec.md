@@ -16,9 +16,9 @@ Documentation: [SchemaValidation](../../../Sources/WireOpenAPI/WireOpenAPI.docc/
 
 ### Requirement: One `Validation` enum per document, emitted only when something asserts
 WireOpenAPIGen SHALL emit, inside the document's generated namespace, an `enum Validation` containing
-one `static func schema_<Name>(_ value: Components.Schemas.<Name>?, at path: String, in location:
-WireOpenAPIFailureLocation, into wireOpenAPIFailures: inout WireOpenAPIFailureAccumulator)` per
-reachable component schema that carries a check, and one `static func <member>(_ input: <Input>) throws`, named by the operationId's safe member
+one `static func schema_<Name>(_:at:in:into:)`, taking `Components.Schemas.<Name>?`, `String`,
+`WireOpenAPIFailureLocation` and `inout WireOpenAPIFailureAccumulator`, per
+reachable component schema that carries a check, and one throwing `static func <member>(_:)` taking the operation's `Input`, named by the operationId's safe member
 name, per operation whose request carries a check. When no operation of the document
 asserts anything, WireOpenAPIGen SHALL emit no `Validation` enum and no validation call.
 
@@ -28,13 +28,13 @@ asserts anything, WireOpenAPIGen SHALL emit no `Validation` enum and no validati
 
 #### Scenario: an unconstrained document
 - **WHEN** no parameter, request body or checked response schema of any operation carries `minLength`, `maxLength`, `pattern`, a numeric bound, `multipleOf`, `minItems`, `maxItems` or `uniqueItems`
-- **THEN** the generated file declares no `enum Validation` and no forwarder contains a `try Validation.` line
+- **THEN** the generated file declares no `enum Validation` and no forwarder runs a validator
 
 Pinned by: `.github/workflows/build.yml` (job "Fixtures — serve and probe", step "Serve an OpenAPI operation and a @Get route from one router", probe `assertNested`) for the recursive scenario. The unconstrained scenario is pinned by nothing yet.
 
 ### Requirement: The operation validator runs first in the forwarder
-The forwarder of an operation whose request carries a check SHALL call `try
-Validation.<operationId>(input)` as its first statement, after only the binding of a request-scoped
+The forwarder of an operation whose request carries a check SHALL call the operation's validator
+with the request `Input` before anything else, after only the binding of a request-scoped
 controller's subject, before the request body is unwrapped, before any graph-aware binding is
 resolved and before the handler is called, and inside the `do` that carries the
 operation's `@ErrorResponse` clauses when it has any. It SHALL be emitted for `@RawOperation` and
@@ -120,7 +120,7 @@ A schema carrying `enum` SHALL produce no check, and WireOpenAPIGen SHALL emit n
 
 #### Scenario: an enum string with a `maxLength`
 - **WHEN** a parameter's schema declares `enum: [a, b]` and `maxLength: 1`
-- **THEN** the parameter's assertions are `.none` and no check is emitted for it
+- **THEN** no check is emitted for it
 
 Pinned by: nothing yet.
 
@@ -263,15 +263,15 @@ Pinned by: `Tests/WireOpenAPITests/SchemaValidationTests.swift` (`responseIs500`
 
 ### Requirement: Response checks cover every way a response is built
 With response validation on, WireOpenAPIGen SHALL check the value a typed `@Operation` returns before
-wrapping it, SHALL check each JSON body of a documented response a `@RawOperation`'s `Output` carries,
-matched with `if case .<status>(let wireOpenAPIPayload) = wireOpenAPIOutput`, and SHALL check the body
+wrapping it, SHALL check the JSON body of each documented response case a `@RawOperation`'s `Output` carries,
+and SHALL check the body
 a three-argument `@ErrorResponse` closure builds inside the forwarder before returning it. A body the
 terminal's `rejectionResponse` closure builds, for a `DecodingError`, catch-all or
 `WireOpenAPIRequestValidationError` mapping, SHALL be sent without a response check.
 
 #### Scenario: a raw operation's output
 - **WHEN** `getOrder` is a `@RawOperation`, its `200` response is an `application/json` `Order`, `Order` carries a check, and its document checks responses
-- **THEN** its forwarder binds `wireOpenAPIOutput`, checks the `.ok` JSON body against `schema_Order`, and returns it only when nothing failed
+- **THEN** its forwarder checks the `.ok` JSON body against `schema_Order`, and returns the output only when nothing failed
 
 Pinned by: `.github/workflows/build.yml` (probe `badResponse`).
 
