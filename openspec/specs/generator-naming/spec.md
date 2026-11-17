@@ -45,8 +45,9 @@ Pinned by: `Tests/WireOpenAPINamingTests/GeneratorSafeNamesTests.swift` (`theGol
 ### Requirement: The defensive strategy escapes characters a Swift identifier cannot hold
 Under `.defensive`, the type and member names SHALL be the same string: the documented name with
 each character that is not a letter, digit or `_` replaced by `_<entity>_`, where `<entity>` is its
-HTML entity name from `specialCharsMap` or `x` followed by its upper-case hexadecimal scalar value;
-a leading digit prefixed with `_`; and a result that is one of `keywords` prefixed with `_`. A letter
+HTML entity name as swift-openapi-generator's `SafeNameGenerator` maps it, or `x` followed by its
+upper-case hexadecimal scalar value; a leading digit prefixed with `_`; and a result that is a Swift
+keyword in that generator's keyword list prefixed with `_`. A letter
 is a member of Foundation's Unicode `CharacterSet.letters`, and after the first character a letter or
 digit is a member of `CharacterSet.alphanumerics`, so non-ASCII letters and digits are kept. An empty
 name SHALL be `_empty`, and a name that sanitises to exactly `_` SHALL be `_underscore_`.
