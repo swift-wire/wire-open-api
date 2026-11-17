@@ -3,8 +3,8 @@
 ## Purpose
 
 How the assertions an OpenAPI document makes, and swift-openapi-generator drops, are enforced at run
-time. WireOpenAPIGen reads each schema's assertions, emits a per-document `Validation` enum of
-validators that call the runtime checks in `WireOpenAPIValidate`, and calls them from each operation's
+time. WireOpenAPIGen reads each schema's assertions, emits per document validators that call
+the runtime checks in `WireOpenAPIValidate`, and calls them from each operation's
 forwarder before the handler runs. A violated request throws `WireOpenAPIRequestValidationError`; a
 violated response, when the document opts in, throws `WireOpenAPIResponseValidationError`. An
 assertion the adapter cannot check fails the build.
@@ -14,21 +14,21 @@ Documentation: [SchemaValidation](../../../Sources/WireOpenAPI/WireOpenAPI.docc/
 
 ## Requirements
 
-### Requirement: One `Validation` enum per document, emitted only when something asserts
-WireOpenAPIGen SHALL emit, inside the document's generated namespace, an `enum Validation` containing
-one `static func schema_<Name>(_:at:in:into:)`, taking `Components.Schemas.<Name>?`, `String`,
-`WireOpenAPIFailureLocation` and `inout WireOpenAPIFailureAccumulator`, per
-reachable component schema that carries a check, and one throwing `static func <member>(_:)` taking the operation's `Input`, named by the operationId's safe member
-name, per operation whose request carries a check. When no operation of the document
-asserts anything, WireOpenAPIGen SHALL emit no `Validation` enum and no validation call.
+### Requirement: Validators are emitted per document, only when something asserts
+WireOpenAPIGen SHALL emit, inside the document's generated namespace, a validator for each
+reachable component schema that carries a check, which checks a `Components.Schemas.<Name>?` at a
+JSON path and records each failure, with its `WireOpenAPIFailureLocation`, into a
+`WireOpenAPIFailureAccumulator`; and a throwing validator over the operation's `Input` for each
+operation whose request carries a check. When no operation of the document
+asserts anything, WireOpenAPIGen SHALL emit no validator and no validation call.
 
 #### Scenario: a recursive constrained schema
 - **WHEN** the document's `Task` schema bounds `title` with `minLength: 1` and `maxLength: 40` and declares `subtasks` as an array of `$ref: '#/components/schemas/Task'`, and `createTask` takes a `Task` body
-- **THEN** `Validation` declares `schema_Task` and `createTask(_:)`, and a request whose `subtasks[1].title` is empty is refused naming `body.subtasks[1].title`
+- **THEN** a validator is emitted for `Task` and one for `createTask`, and a request whose `subtasks[1].title` is empty is refused naming `body.subtasks[1].title`
 
 #### Scenario: an unconstrained document
 - **WHEN** no parameter, request body or checked response schema of any operation carries `minLength`, `maxLength`, `pattern`, a numeric bound, `multipleOf`, `minItems`, `maxItems` or `uniqueItems`
-- **THEN** the generated file declares no `enum Validation` and no forwarder runs a validator
+- **THEN** the generated file declares no validator and no forwarder runs one
 
 Pinned by: `.github/workflows/build.yml` (job "Fixtures — serve and probe", step "Serve an OpenAPI operation and a @Get route from one router", probe `assertNested`) for the recursive scenario. The unconstrained scenario is pinned by nothing yet.
 
@@ -105,8 +105,8 @@ Pinned by: `Tests/WireOpenAPITests/ValidationChecksTests.swift` (`nilPasses`) fo
 The emitted checks SHALL descend into an inline object's properties with the path
 `<path>.<propertyName>`, SHALL check each `allOf` member through its `value<N>` accessor while
 reporting at the parent's JSON path, and SHALL emit a `$ref` to a schema that carries checks as a
-call to that schema's `schema_<Name>` function rather than an expansion, so a recursive schema emits
-one self-calling function.
+call to that schema's validator rather than an expansion, so a recursive schema emits
+one self-calling validator.
 
 #### Scenario: a failure two levels into a recursive body
 - **WHEN** `createTask`, declared at `POST /api/v1/tasks/new` with a `Task` body whose `title` declares `minLength: 1` and whose `subtasks` are `$ref` to `Task`, maps `WireOpenAPIRequestValidationError` to its documented 422 with a closure answering `Problem(message: "rejected: " + <the failures' paths, joined by ", ">)`, and `POST /api/v1/tasks/new?title=t` carries `{"id":"x","title":"ok","subtasks":[{"id":"y","title":"fine"},{"id":"z","title":""}]}`
@@ -169,7 +169,7 @@ Pinned by: `Sources/DiagnosticGoldenTool/diagnostics-golden.txt` (`parameters/pa
 `WireOpenAPIFailureAccumulator.defaultLimit` (100), SHALL set `truncated` when `record` is called
 after the limit is reached, and SHALL yield no error when nothing was recorded. The generated walk
 SHALL stop descending once `isFull` is true: every `WireOpenAPIValidate` check, the array element walk
-and every emitted `schema_<Name>` function return before recording, so in generated validation
+and every emitted schema validator return before recording, so in generated validation
 `truncated` is set only when one check call records across the limit, and a request that stops at the
 cap otherwise reports `truncated` as false. That is tracked as a defect in
 https://github.com/swift-wire/wire-open-api/issues/92.
@@ -271,7 +271,7 @@ terminal's `rejectionResponse` closure builds, for a `DecodingError`, catch-all 
 
 #### Scenario: a raw operation's output
 - **WHEN** `getOrder` is a `@RawOperation`, its `200` response is an `application/json` `Order`, `Order` carries a check, and its document checks responses
-- **THEN** its forwarder checks the `.ok` JSON body against `schema_Order`, and returns the output only when nothing failed
+- **THEN** its forwarder checks the `.ok` JSON body with `Order`'s validator, and returns the output only when nothing failed
 
 Pinned by: `.github/workflows/build.yml` (probe `badResponse`).
 
