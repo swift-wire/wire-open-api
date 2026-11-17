@@ -21,11 +21,11 @@ declaring the throwing `registerWireRoutes(on:coding:)`, generic over `Builder: 
 taking `inout Builder` and `WireMVCCoding`, constrained by `Builder.RequestContext: ~Copyable & SendableMetatype & ResponseHeaderCarrying`,
 `Builder.Reader: ~Copyable`, `Builder.ResponseSender: ~Copyable` and
 `Builder.ResponseSender.Writer: ~Copyable`. Groups SHALL be emitted in ascending order of group name,
-each preceded by its conformer namespace.
+each preceded by its per-document spec namespace.
 
 #### Scenario: two documents in one app
 - **WHEN** the app `WireOpenAPIBootstrapExample` holds the `OrdersAPI` group, for a dependency's document, and the `WireOpenAPIBootstrapExample` group, for its own
-- **THEN** `_WireOpenAPIHandlers.swift` declares `enum _WireOpenAPISpec_OrdersAPI` and `extension _WireOpenAPIContributor_OrdersAPI: RouteContributor` before `enum _WireOpenAPISpec_WireOpenAPIBootstrapExample` and `extension _WireOpenAPIContributor_WireOpenAPIBootstrapExample: RouteContributor`, and both documents' operations serve
+- **THEN** `_WireOpenAPIHandlers.swift` declares the `OrdersAPI` spec namespace and `extension _WireOpenAPIContributor_OrdersAPI: RouteContributor` before the `WireOpenAPIBootstrapExample` spec namespace and `extension _WireOpenAPIContributor_WireOpenAPIBootstrapExample: RouteContributor`, and both documents' operations serve
 
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, `Build` step, and the `openapi` and `order` assertions of step `Serve an OpenAPI operation and a @Get route from one router`), which pin that both groups compile and serve. The ascending emission order is pinned by nothing yet.
 
@@ -67,12 +67,12 @@ compiling target's own document and `<M>.Servers` for a document in module `M`.
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `order` assertion).
 
 ### Requirement: A document with no servers registers without a prefix
-When the document declares no servers, or no document was loaded, the template SHALL be built with
-no `serverURL:` argument.
+When the document declares no servers, or no document was loaded, the template SHALL be built
+without a server URL.
 
 #### Scenario: no `servers:` block
 - **WHEN** a document declares `paths: /tasks/{id}` and no `servers:`
-- **THEN** the emitted `UniversalServer(` call has no `serverURL:` argument and the operation registers at `/tasks/{id}`
+- **THEN** the server is built without a server URL and the operation registers at `/tasks/{id}`
 
 Pinned by: nothing yet.
 
@@ -160,7 +160,7 @@ The route terminal SHALL call `WireOpenAPIRoutes.invoke(handler:request:pathPara
 with a `@Sendable` handler that calls the server's `<method>(request:body:metadata:)`, where
 `<method>` is the implementing controller method's own name, and with `operationID:` the operation's
 id. That call resolves only when the method's name equals the `UniversalServer` member the generator
-names from the operationId (`GeneratorSafeNames.swiftMemberName(for:strategy:)`); a renamed
+names from the operationId (the member name [generator-naming](../generator-naming/spec.md) derives from it); a renamed
 `@RawOperation("<id>")` method produces a call to a member that does not exist, which is tracked as a
 defect in https://github.com/swift-wire/wire-open-api/issues/63. `invoke` SHALL collect the request body, pass it as `nil` when empty, and send the generated
 `HTTPResponse` and body through the sender it was given.
@@ -179,7 +179,7 @@ body with `WireMVCRequest.collectBody(_:maximumSize:)` and the response body wit
 
 #### Scenario: the generated call
 - **WHEN** WireOpenAPIGen emits any terminal
-- **THEN** its `WireOpenAPIRoutes.invoke(` call carries no `maximumBodySize:` argument
+- **THEN** it uses `invoke`'s default body-size limit of 1,000,000 bytes
 
 Pinned by: nothing yet.
 
@@ -222,8 +222,8 @@ before rethrowing the error.
 Pinned by: nothing yet.
 
 ### Requirement: The conformer lives in a per-document namespace
-Each group's `Conformer` SHALL be declared inside `enum _WireOpenAPISpec_<Group>`, with every
-character of `<Group>` that is not a letter or digit replaced by `_`. When the
+Each group's `APIProtocol` conformer SHALL be declared inside a per-document spec namespace, one
+per group, so that two documents' identically spelled types do not collide. When the
 document belongs to another module `M`, the namespace SHALL first declare
 `typealias APIProtocol = M.APIProtocol`, `typealias Components = M.Components`,
 `typealias Operations = M.Operations` and `typealias Servers = M.Servers`; for the compiling
@@ -231,7 +231,7 @@ target's own document it SHALL declare none.
 
 #### Scenario: two documents spelling their types identically
 - **WHEN** the app generates the Tasks document, serving `getTask` at `GET /api/v1/tasks/{id}`, and imports `OrdersAPI`, whose `OrderController` serves `getOrder` at `GET /api/v2/orders/{id}` and writes `Operations.GetOrder.Input` unqualified in its own module
-- **THEN** the emitted `enum _WireOpenAPISpec_OrdersAPI` carries the four typealiases, `enum _WireOpenAPISpec_WireOpenAPIBootstrapExample` carries none, and both `GET /api/v2/orders/7` and `GET /api/v1/tasks/42` answer `200`
+- **THEN** the `OrdersAPI` spec namespace carries the four typealiases, the `WireOpenAPIBootstrapExample` one carries none, and both `GET /api/v2/orders/7` and `GET /api/v1/tasks/42` answer `200`
 
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, `Build` step, and the `order` and `openapi` assertions of step `Serve an OpenAPI operation and a @Get route from one router`).
 
