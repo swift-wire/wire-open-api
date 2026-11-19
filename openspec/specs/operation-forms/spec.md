@@ -9,6 +9,23 @@ in, or from the request scope for a graph-aware binding, and wraps the return va
 the document declares. Both are forwarded to from the group's one generated `APIProtocol` conformer, and every operation the
 document declares must be implemented by exactly one marked method.
 
+Terms used below:
+
+- **Group**: the controllers collated against one OpenAPI document; see
+  [controller-collation](../controller-collation/spec.md).
+- **Conformer**: the `Conformer` struct WireOpenAPIGen emits once per group, which conforms to the
+  `APIProtocol` swift-openapi-generator derives from that document and holds one field per controller,
+  optional for a request-scoped one. A **template** conformer is built once at registration with no
+  request-scoped field filled; when the group has a request-scoped controller, a **per-request**
+  conformer holding that request's subjects is built for each dispatch.
+- **Forwarder**: the conformer's implementation of one `APIProtocol` requirement, which calls the
+  marked method. A `@RawOperation` forwarder passes `Input` through; an `@Operation` forwarder reads
+  each argument out of `Input` and wraps the result in `Output`.
+- **Route terminal**: the generated route handler for one operation, which obtains the request's
+  server and calls that operation's method on it; see [route-mounting](../route-mounting/spec.md).
+- **Graph-aware binding**: an `@Operation` parameter whose value is produced by a worker resolved
+  from the request scope rather than read from the request, defined below.
+
 Rationale: [WireOpenAPIAdvanced](../../../Documentation/Notes/WireOpenAPIAdvanced.md).
 Documentation: [Operations](../../../Sources/WireOpenAPI/WireOpenAPI.docc/Operations.md), [WritingAnOpenAPIController](../../../Sources/WireOpenAPI/WireOpenAPI.docc/WritingAnOpenAPIController.md).
 
@@ -84,10 +101,11 @@ Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI
 
 ### Requirement: Every `@Operation` parameter carries a binding annotation
 Each parameter of an `@Operation` method SHALL carry `@Path`, `@Query`, `@Header`, `@JSONBody`, or
-an attribute naming a type declared with `@RequestBinding(Worker.self)`. A parameter carrying none
-SHALL be refused with
+the attribute of a graph-aware binding (see "A `@RequestBinding` attribute marks a graph-aware
+binding"). A parameter carrying none SHALL be refused with
 `<file>:<line>: error: parameter '<name>' of @Operation '<id>' needs a binding annotation — one of @Path, @Query, @Header, @JSONBody. The document says where each parameter lives; the annotation says which one this is.`
-at the parameter's line, and the generator SHALL exit with status 1.
+at the parameter's line, and the generator SHALL exit with status 1. The message SHALL list only the
+four built-in annotations, even when graph-aware bindings are declared in the scanned sources.
 
 #### Scenario: a parameter left bare
 - **WHEN** `@Operation func summariseTask(id: String) async throws -> Components.Schemas.Task` is declared
@@ -233,7 +251,7 @@ A handler with no return type SHALL be answered with `.<case>(.init())`.
 
 Pinned by: `.github/workflows/build.yml` (`Fixtures` job, step `Serve an OpenAPI operation and a @Get route from one router`, the `deleted` assertion and the `deleted: 7` log check). The diagnostics are pinned by nothing yet.
 
-### Requirement: The selected response must be one the typed shim can construct
+### Requirement: The selected response must be one the `@Operation` forwarder can construct
 Against the selected response, WireOpenAPIGen SHALL refuse a body whose content types are not
 exactly `application/json` with
 `error: '<id>' responds with <types>, which the typed shim cannot construct yet — it builds JSON bodies only. Use @RawOperation for this operation.`,
@@ -266,22 +284,62 @@ when no config is passed, the key is absent, or its value is not a known strateg
 
 Pinned by: `Tests/WireOpenAPINamingTests/GeneratorSafeNamesTests.swift` (`generatorDefaultIsDefensive`, which pins that `GeneratorNamingStrategy.generatorDefault` is `.defensive`, and `reproducesTheGenerator`), `.github/workflows/build.yml` (`Fixtures` job, the `typed` assertion, and step `Check the naming golden table against the real generator`). The fallback to `generatorDefault` from a missing config, a missing `namingStrategy` key or an unknown value is pinned by nothing yet.
 
-### Requirement: A graph-aware binding is resolved by its worker inside the forwarder
-A parameter attribute naming a type declared anywhere in the scanned sources with
-`@RequestBinding(Worker.self, …)` SHALL be treated as scope-resolved: it SHALL be excused from the
-document's parameter checks, the conformer SHALL carry, as optionals, the worker, the request and its
-path parameters, and the forwarder SHALL
-bind it, before calling the handler and inside the `do` the `@ErrorResponse` catches wrap, with
-`try await <worker>.bind(name: "<documentedName>", request:, pathParameters:, body: nil)`. A
-per-request conformer SHALL fill the worker from the scope entry's field swift-wire names for that
-worker (the lower-cameled type name, with `<` spelt `Of`, `,` spelt `And`, the letter after either
-upper-cased, and every other character but letters, digits and `_` dropped), only for workers the owning controller's own operations name.
+### Requirement: A `@RequestBinding` attribute marks a graph-aware binding
+An `@Operation` parameter SHALL be a graph-aware binding when it carries an attribute naming a type
+declared anywhere in the scanned sources with `@RequestBinding(Worker.self, …)`; `Worker` is that
+binding's **worker**. Its **action** SHALL be the attribute's first argument when that is a string
+literal, and the parameter's own name otherwise. Graph-aware bindings are wire-mvc's
+[graph-aware-bindings](https://github.com/swift-wire/wire-mvc/blob/main/openspec/specs/graph-aware-bindings/spec.md);
+this specification states only how an `@Operation` forwarder uses one.
+
+#### Scenario: a binding declared in another file
+- **WHEN** `TaskController.authorizedTask` declares `@AuthorizedTask("read") task: Components.Schemas.Task`, and `AuthorizedTaskBinding.swift` declares `AuthorizedTask` with `@RequestBinding(TaskAuthorizer.self)`
+- **THEN** `task` is a graph-aware binding whose worker is `TaskAuthorizer` and whose action is `read`
+
+Pinned by: `Fixtures/Sources/WireOpenAPIBootstrapExample/Controllers.swift` (`authorizedTask`), `Fixtures/Sources/WireOpenAPIBootstrapExample/AuthorizedTaskBinding.swift` (built by the `Build` step of the `Fixtures` job in `.github/workflows/build.yml`).
+
+### Requirement: A graph-aware binding is not checked against the document
+A graph-aware binding SHALL be excused from every check of a bound parameter against the document's
+`parameters:` (its name, its location, and its being declared at all), since what it binds is
+resolved from the request scope and never crosses the wire. `Input` has no member for it. It SHALL be
+checked instead against its worker's scope (see "A graph-aware worker must be `@Scoped` on the owning
+controller's seed").
+
+#### Scenario: an action the document does not declare
+- **WHEN** `authorizedTask(@Path id: String, @AuthorizedTask("read") task: Components.Schemas.Task)` implements an operation whose document declares only `id` in path
+- **THEN** no diagnostic names `read` or `task`, and the target builds
+
+Pinned by: `Fixtures/Sources/WireOpenAPIBootstrapExample/Controllers.swift` (`authorizedTask`, built by the `Build` step of the `Fixtures` job in `.github/workflows/build.yml`).
+
+### Requirement: The forwarder binds a graph-aware parameter through its worker before the handler
+For each graph-aware binding, the `@Operation` forwarder SHALL call
+`try await <worker>.bind(name: "<action>", request:, pathParameters:, body: nil)` and pass its
+result as that argument. The call SHALL come before the handler call and inside the `do` whose
+`catch` clauses `@ErrorResponse` emits, so an error the worker throws is mapped as one the handler
+throws would be. `body:` SHALL always be `nil`: a graph-aware binding never sees the request body.
 
 #### Scenario: a worker beside a documented parameter
 - **WHEN** `TaskController` declares `@Operation @ErrorResponse(TaskForbidden.self, .forbidden) func authorizedTask(@Path id: String, @AuthorizedTask("read") task: Components.Schemas.Task)` and `AuthorizedTask` carries `@RequestBinding(TaskAuthorizer.self)`
-- **THEN** the forwarder binds `task` through `TaskAuthorizer` with `bind(name: "read", …)`, taking the worker from the scope entry's `taskAuthorizer`, and the target builds
+- **THEN** the forwarder binds `task` through `TaskAuthorizer` with `bind(name: "read", …, body: nil)` inside the `do` that maps `TaskForbidden` to `.forbidden`, then calls `authorizedTask` with `id` from `Input` and `task` from the worker, and the target builds
 
-Pinned by: `Fixtures/Sources/WireOpenAPIBootstrapExample/Controllers.swift` (`authorizedTask`), `Fixtures/Sources/WireOpenAPIBootstrapExample/AuthorizedTaskBinding.swift` (built by the `Build` step of the `Fixtures` job in `.github/workflows/build.yml`). No probe calls `authorizedTask` at runtime.
+Pinned by: `Fixtures/Sources/WireOpenAPIBootstrapExample/Controllers.swift` (`authorizedTask`), `Fixtures/Sources/WireOpenAPIBootstrapExample/AuthorizedTaskBinding.swift` (built by the `Build` step of the `Fixtures` job in `.github/workflows/build.yml`). No probe calls `authorizedTask` at runtime, so the binding's result and the error mapping are pinned by nothing yet.
+
+### Requirement: The conformer carries each worker and fills it per request
+When any operation in the group has a graph-aware binding, the conformer SHALL carry, as optionals,
+one field for each distinct worker those bindings name, plus the request and its matched path
+parameters, which `bind` takes and `Input` does not carry. The template conformer SHALL leave them
+all `nil`. A per-request conformer SHALL fill the request and path parameters, and SHALL fill only
+the workers the owning controller's own operations name, each from the field swift-wire names for
+that worker on the controller's scope entry. Workers named only by a sibling controller's operations
+SHALL stay `nil`, because the entry being entered does not yield them. swift-wire names that field
+by lower-camel-casing the worker's type name, with `<` spelt `Of` and `,` spelt `And`, the letter
+after either upper-cased, and every other character except letters, digits and `_` dropped.
+
+#### Scenario: the worker's scope entry field
+- **WHEN** `TaskController`'s `authorizedTask` binds through `TaskAuthorizer`
+- **THEN** the per-request conformer built for `TaskController` takes the worker from its scope entry's `taskAuthorizer`
+
+Pinned by: `Fixtures/Sources/WireOpenAPIBootstrapExample/Controllers.swift` (`authorizedTask`, built by the `Build` step of the `Fixtures` job in `.github/workflows/build.yml`). The field-name spelling for a generic worker, and leaving a sibling controller's workers `nil`, are pinned by nothing yet.
 
 ### Requirement: A graph-aware worker must be `@Scoped` on the owning controller's seed
 For a scope-resolved parameter, WireOpenAPIGen SHALL refuse a worker with no `@Scoped(seed:)` in the
