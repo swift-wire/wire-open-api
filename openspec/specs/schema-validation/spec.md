@@ -263,7 +263,7 @@ not consult that closure for this error, whether it arrives bare or as a `Server
 - **WHEN** an operation with response validation on maps `Swift.Error` to its documented `400`, and its handler returns a body that violates the document's schema
 - **THEN** the answer is `500` with a zero-length body, not `400`
 
-Pinned by: `Tests/WireOpenAPITests/SchemaValidationTests.swift` (`responseIs500`), `.github/workflows/build.yml` (probe `badResponse`). The terminal's refusal to consult its closure is pinned by `Tests/WireOpenAPITests/ResponseSelectionTests.swift` (`serviceBreaches`), which tests the predicate the terminal applies; no probe drives a violating response through a catch-all.
+Pinned by: `Tests/WireOpenAPITests/SchemaValidationTests.swift` (`responseIs500`), `.github/workflows/build.yml` (probe `badResponse`). The terminal's refusal to consult its closure is pinned by `Tests/WireOpenAPITests/ServiceBreachTests.swift` (`serviceBreaches`), which tests the predicate the terminal applies; no probe drives a violating response through a catch-all.
 
 ### Requirement: Response checks cover every way a response is built
 With response validation on, WireOpenAPIGen SHALL check the value a typed `@Operation` returns before
