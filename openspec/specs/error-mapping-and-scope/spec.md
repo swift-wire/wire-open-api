@@ -20,8 +20,10 @@ Terms used below:
   that does not map the same error type itself. An operation that does map it *shadows* the
   controller's mapping, whose forwarder clause is then never reached for that operation.
 - **Scope entry**: building a `@Scoped(seed:)` controller's request scope for one request. It happens
-  in the route terminal before the forwarder is entered, so before any operation's handler runs, and
-  a binding that throws during it fails the request with no operation's mappings around it.
+  in the route terminal before the forwarder is entered, so before any operation's handler runs. A
+  binding that throws during it is outside every forwarder clause, so it is answered only by the
+  controller's controller-scope mappings; see *A failure entering the request scope is answered by
+  controller-scope mappings*.
 - **Terminal-scoped mapping**: a mapping of `DecodingError`, `Error` or `Swift.Error`, the error
   types that can be thrown before the forwarder is entered, when the generated server rejects a
   request body. The route terminal is offered such a mapping in addition to the forwarder, and the
@@ -234,6 +236,11 @@ with a closure built from the controller-scope mappings only. `refuse` SHALL try
 no controller-scope mappings SHALL enter the scope without a refusal closure, so a failure propagates
 unanswered by mappings.
 
+This diverges from wire-mvc, which catches a scope-entry throw in the same `catch` as a handler throw
+and maps it with route-scope then controller-scope mappings, answering an unmatched one with its
+built-in 500. Aligning with wire-mvc is tracked in
+https://github.com/swift-wire/wire-open-api/issues/109.
+
 #### Scenario: a binding that throws while the scope is built
 - **WHEN** the `@Scoped(seed: HTTPRequest.self)` `GatedTaskController` implements `gatedTask` (`GET /api/v1/tasks/{id}/gated`), maps `Unauthenticated` at controller scope with `{ _ in Components.Schemas.Problem(message: "no user") }`, and injects `RequestGate`, whose `init(seed:)` throws `Unauthenticated` without an `x-user` header; an app-wide `@Middleware` adds `x-served-by: wire-open-api` to every response; and `GET /api/v1/tasks/42/gated` arrives without an `x-user` header
 - **THEN** the answer is `401` with `"message":"no user"` and the global middleware's `x-served-by: wire-open-api` header
@@ -246,15 +253,17 @@ Pinned by: `.github/workflows/build.yml` (probes `gated`, `gatedOK`, `gatedServe
 
 ### Requirement: A scoped controller's mapping status is declared even by operations that shadow it
 A scope-entry failure is answered by the controller-scope mappings whichever operation was
-requested, and shadowing cannot prevent it: an operation's own mapping matches only what its handler
-throws, and scope entry fails before any handler runs. So for a `@Scoped(seed:)` controller's
+requested, and shadowing cannot prevent it, because an operation's own mappings are not consulted at
+scope entry. So for a `@Scoped(seed:)` controller's
 mapping that is not terminal-scoped, WireOpenAPIGen SHALL report once against the controller every
 operation that shadows the mapping and whose document lacks its status:
 `@ErrorResponse(<E>.self, .<status>) on '<Controller>' also answers a failure entering its request
 scope, which happens before an operation is dispatched — so it applies to <operations> too, despite
 their own mapping of the same error, and the document does not declare <code> there. Add it, or drop
 the controller-scope mapping.` Operations the mapping covers are checked by *A controller-scope
-mapping is declared by every operation it covers*, not by this rule.
+mapping is declared by every operation it covers*, not by this rule. This rule exists only because
+scope entry ignores route-scope mappings, and is expected to be removed when that is aligned with
+wire-mvc in https://github.com/swift-wire/wire-open-api/issues/109.
 
 #### Scenario: a shadowing operation without the status
 - **WHEN** the `@Scoped(seed: HTTPRequest.self)` `GateController` declares `@ErrorResponse(Unauthenticated.self, .unauthorized)`, and its operation `opB` declares `@ErrorResponse(Unauthenticated.self, .forbidden)`, documents a 403, and documents no 401
