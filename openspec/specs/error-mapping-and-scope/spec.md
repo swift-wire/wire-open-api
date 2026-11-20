@@ -1,0 +1,283 @@
+# Error mapping and request scope
+
+## Purpose
+
+How wire-mvc's `@ErrorResponse` applies to OpenAPI operations, and how a failure entering a request
+scope is answered. WireOpenAPIGen checks each mapping against the document, applies the mappings in
+the operation's forwarder so a mapped error is answered as one of the document's own responses, and hands the mappings only matchable outside the forwarder to the route terminal in
+`WireOpenAPIRoutes`. The wire-mvc tier model and request-scope model are specified in wire-mvc and
+linked below; this spec states the OpenAPI adaptation.
+
+Terms used below:
+
+- **Forwarder** and **route terminal**: as defined in
+  [operation-forms](../operation-forms/spec.md). The forwarder calls the controller method, so it
+  sees what the handler throws; the route terminal calls the forwarder, so it also sees what fails
+  before the forwarder is entered.
+- **Route scope** and **controller scope**: an `@ErrorResponse` written on an operation's method, and
+  one written on the `@OpenAPIController` type, which applies to all of its operations.
+- **Covers** and **shadows**: a controller-scope mapping *covers* each of the controller's operations
+  that does not map the same error type itself. An operation that does map it *shadows* the
+  controller's mapping, whose forwarder clause is then never reached for that operation.
+- **Scope entry**: building a `@Scoped(seed:)` controller's request scope for one request. It happens
+  in the route terminal before the forwarder is entered, so before any operation's handler runs. A
+  binding that throws during it is outside every forwarder clause, so it is answered only by the
+  controller's controller-scope mappings; see *A failure entering the request scope is answered by
+  controller-scope mappings*.
+- **Terminal-scoped mapping**: a mapping of `DecodingError`, `Error` or `Swift.Error`, the error
+  types that can be thrown before the forwarder is entered, when the generated server rejects a
+  request body. The route terminal is offered such a mapping in addition to the forwarder, and the
+  declared-status rules do not apply to it; see *Terminal-scoped mappings are exempt from the
+  declared-status rule*. The name says where the mapping can additionally match, not that it lives
+  only at the terminal.
+
+Rationale: [WireOpenAPIAdvanced](../../../Documentation/Notes/WireOpenAPIAdvanced.md).
+Documentation: [ScopeAndErrors](../../../Sources/WireOpenAPI/WireOpenAPI.docc/ScopeAndErrors.md).
+
+## Requirements
+
+### Requirement: The pair form maps only to a response without a body
+WireOpenAPIGen SHALL reject `@ErrorResponse(E.self, .status)` on an operation whose documented
+response for that status carries a body, with `@ErrorResponse(<E>.self, .<status>) on
+'<operationId>' maps to a <code> response that carries a body, so a status alone cannot construct it.
+Supply one — @ErrorResponse(<E>.self, .<status>, { e in … }).`
+
+#### Scenario: a pair form against a bodied 404
+- **WHEN** operation `opA` documents a 404 with a JSON body and declares `@ErrorResponse(Gone.self, .notFound)`
+- **THEN** WireOpenAPIGen reports `@ErrorResponse(Gone.self, .notFound) on 'opA' maps to a 404 response that carries a body, so a status alone cannot construct it. Supply one — @ErrorResponse(Gone.self, .notFound, { e in … }).`
+
+#### Scenario: a pair form against a bodiless 403
+- **WHEN** `summariseTask` documents `'403': { description: Not allowed }`, declares `@ErrorResponse(NotAuthorised.self, .forbidden)`, and its handler throws `NotAuthorised` for `GET /api/v1/tasks/secret/summary`
+- **THEN** the answer is `403`
+
+Pinned by: `Sources/DiagnosticGoldenTool/diagnostics-golden.txt` (`route-scope/pair-form-against-a-bodied-response`), `.github/workflows/build.yml` (job "Fixtures — serve and probe", step "Serve an OpenAPI operation and a @Get route from one router", probe `mappedUndocumented`).
+
+### Requirement: The body form maps only to a response with a JSON body
+WireOpenAPIGen SHALL reject `@ErrorResponse(E.self, .status, { e in … })` on an operation whose
+documented response for that status carries no content, with `@ErrorResponse(<E>.self, .<status>, …)
+on '<operationId>' supplies a body, but the document's <code> response carries none. Drop the closure.`
+Where the response carries a JSON body, the forwarder SHALL return that response case built from the
+closure's value, serialised by the generated server.
+
+#### Scenario: a closure against a bodiless 404
+- **WHEN** `opA` documents a 404 with no content and declares `@ErrorResponse(Gone.self, .notFound, { … })`
+- **THEN** WireOpenAPIGen reports `@ErrorResponse(Gone.self, .notFound, …) on 'opA' supplies a body, but the document's 404 response carries none. Drop the closure.`
+
+#### Scenario: a closure against a bodied 404
+- **WHEN** `summariseTask` documents a 404 carrying `Problem`, maps `@ErrorResponse(NoSuchTask.self, .notFound, { _ in Components.Schemas.Problem(message: "no such task") })`, and `GET /api/v1/tasks/missing/summary` makes the handler throw `NoSuchTask`
+- **THEN** the answer is `404` with a body containing `"message":"no such task"`
+
+Pinned by: `Sources/DiagnosticGoldenTool/diagnostics-golden.txt` (`route-scope/closure-form-against-a-bare-response`), `.github/workflows/build.yml` (probe `mappedDocumented`).
+
+### Requirement: Only JSON response bodies can be constructed
+At route scope, WireOpenAPIGen SHALL reject a body-form mapping whose documented response declares
+more than one content type or a content type other than `application/json`, with
+`@ErrorResponse(<E>.self, .<status>) on '<operationId>' maps to a <code> response whose content type
+this adapter cannot construct — it builds JSON bodies only. Use @RawOperation for this operation.`
+This check runs after the route-scope form check, so a pair form against such a response is reported
+with the pair-form message instead.
+
+#### Scenario: a non-JSON 404
+- **WHEN** `opA`'s 404 declares only `application/xml` and `opA` declares `@ErrorResponse(Gone.self, .notFound, { … })`
+- **THEN** WireOpenAPIGen reports `@ErrorResponse(Gone.self, .notFound) on 'opA' maps to a 404 response whose content type this adapter cannot construct — it builds JSON bodies only. Use @RawOperation for this operation.`
+
+Pinned by: `Sources/DiagnosticGoldenTool/diagnostics-golden.txt` (`route-scope/unconstructible-content-type`).
+
+### Requirement: The closure-only form is rejected
+WireOpenAPIGen SHALL reject a one-argument `@ErrorResponse` on an `@OpenAPIController` with
+`@ErrorResponse's closure form is not supported for OpenAPI operations: it returns a WireMVCOutcome —
+a status and bytes — while an operation answers with one of the responses its document declares. Use
+@ErrorResponse(E.self, .status) where that response carries no body, or @ErrorResponse(E.self,
+.status, { e in … }) where it carries one.`
+
+#### Scenario: a closure mapping on an operation
+- **WHEN** an `@Operation` carries `@ErrorResponse({ error in … })`
+- **THEN** WireOpenAPIGen reports that message at the attribute
+
+Pinned by: nothing yet.
+
+### Requirement: A route-scope mapping names a status the document declares
+WireOpenAPIGen SHALL reject a route-scope mapping, other than a terminal-scoped one, whose status the
+operation does not document, with `@ErrorResponse(<E>.self, .<status>) on '<operationId>' maps to a
+status the document does not declare for it. It declares <statuses>. A mapped error is answered as one
+of the operation's own responses, so the document has to describe it — add it there, or map to one it
+already declares.` A route-scope mapping to `.internalServerError` SHALL NOT be reported by this rule.
+Where the operation does not document 500, the forwarder still emits a clause for that mapping which
+returns `.internalServerError(.init())`, a case the operation's generated `Output` does not have, so
+the generated code fails to compile; this is tracked as a defect in
+https://github.com/swift-wire/wire-open-api/issues/64.
+
+#### Scenario: an undeclared 404
+- **WHEN** `opA` documents only 200 and declares `@ErrorResponse(Gone.self, .notFound)`
+- **THEN** WireOpenAPIGen reports `@ErrorResponse(Gone.self, .notFound) on 'opA' maps to a status the document does not declare for it. It declares .ok. A mapped error is answered as one of the operation's own responses, so the document has to describe it — add it there, or map to one it already declares.`
+
+#### Scenario: an undeclared 500
+- **WHEN** `opA` documents only 200 and declares `@ErrorResponse(Gone.self, .internalServerError)`
+- **THEN** WireOpenAPIGen reports nothing for the mapping, and the forwarder answers `Gone` with `.internalServerError(.init())`, which the operation's generated `Output` does not declare
+
+Pinned by: `Sources/DiagnosticGoldenTool/diagnostics-golden.txt` (`route-scope/status-not-declared`). The `.internalServerError` exemption is pinned by nothing yet.
+
+### Requirement: A status name must resolve
+WireOpenAPIGen SHALL reject a route-scope mapping, other than a terminal-scoped one, whose status is
+not the safe name of any code from 100 to 599 with `@ErrorResponse(<E>.self, .<status>) on '<operationId>' names a status this
+adapter cannot resolve. Use one of HTTPResponse.Status's named cases.` A controller-scope mapping's
+status is not checked by this rule: a misspelled one is reported by the controller-scope
+undeclared-status rule, which names 500 as the status every covered operation has to declare.
+
+#### Scenario: a misspelled status
+- **WHEN** an `@Operation` declares `@ErrorResponse(Gone.self, .notFond)`
+- **THEN** WireOpenAPIGen reports `@ErrorResponse(Gone.self, .notFond) on '<operationId>' names a status this adapter cannot resolve. Use one of HTTPResponse.Status's named cases.`
+
+Pinned by: nothing yet.
+
+### Requirement: A controller-scope mapping is declared by every operation it covers
+For a controller-scope mapping that is not terminal-scoped, WireOpenAPIGen SHALL report once against
+the controller every operation the mapping covers whose document lacks the status, leaving out
+operations that shadow it: `@ErrorResponse(<E>.self, .<status>) on '<Controller>' maps
+to a status the document does not declare for <operations>. A mapped error is answered as one of the
+operation's own responses, so every operation the mapping covers has to declare <code> — add it there,
+or move the mapping to the operations that do.` There is no `.internalServerError` exemption at this
+scope.
+
+#### Scenario: one operation lacks the status
+- **WHEN** `GateController` declares `@ErrorResponse(Gone.self, .notFound)` and its operation `opB` documents no 404
+- **THEN** WireOpenAPIGen reports `@ErrorResponse(Gone.self, .notFound) on 'GateController' maps to a status the document does not declare for 'opB'. A mapped error is answered as one of the operation's own responses, so every operation the mapping covers has to declare 404 — add it there, or move the mapping to the operations that do.`
+
+Pinned by: `Sources/DiagnosticGoldenTool/diagnostics-golden.txt` (`controller-scope/status-not-declared-for-some-operations`).
+
+### Requirement: A controller-scope mapping's form fits every operation it covers
+Across the covered operations that document the status, WireOpenAPIGen SHALL report, in this order,
+a response it cannot construct, operations that disagree about carrying a body, a closure where a
+response carries none, and a pair form where a response carries a body, each naming the operations
+concerned.
+
+#### Scenario: covered operations disagree about a body
+- **WHEN** `GateController`'s `@ErrorResponse(Gone.self, .notFound)` covers `opA`, whose 404 carries a body, and `opB`, whose 404 does not
+- **THEN** WireOpenAPIGen reports `@ErrorResponse(Gone.self, .notFound) on 'GateController' covers operations whose 404 responses disagree about carrying a body — with: 'opA'; without: 'opB'. One mapping cannot construct both — move it to route scope on each, or make the document agree.`
+
+#### Scenario: a pair form against a bodied response
+- **WHEN** `GateController`'s `@ErrorResponse(Gone.self, .notFound)` covers only `opA`, whose 404 carries a body
+- **THEN** WireOpenAPIGen reports `@ErrorResponse(Gone.self, .notFound) on 'GateController' maps to a 404 response that carries a body for 'opA', so a status alone cannot construct it. Supply one — @ErrorResponse(Gone.self, .notFound, { e in … }).`
+
+Pinned by: `Sources/DiagnosticGoldenTool/diagnostics-golden.txt` (`controller-scope/covered-operations-disagree-about-a-body`, `controller-scope/pair-form-against-a-bodied-response`, `controller-scope/closure-form-against-a-bare-response`, `controller-scope/unconstructible-content-type`, `accepted/per-operation-forms-are-the-remedy-for-disagreement`).
+
+### Requirement: A catch-all is last
+WireOpenAPIGen SHALL reject a `@ErrorResponse(Error.self, …)` or `@ErrorResponse(Swift.Error.self, …)`
+followed, in route-then-controller order, by another mapping, with `@ErrorResponse(<E>.self,
+.<status>) on '<operationId>' is a catch-all, so the mappings after it can never match — <types>. Put
+the catch-all last.`
+
+#### Scenario: a catch-all before `Gone`
+- **WHEN** `opA` declares `@ErrorResponse(Swift.Error.self, .notFound)` and then `@ErrorResponse(Gone.self, …)`
+- **THEN** WireOpenAPIGen reports `@ErrorResponse(Swift.Error.self, .notFound) on 'opA' is a catch-all, so the mappings after it can never match — Gone. Put the catch-all last.`
+
+Pinned by: `Sources/DiagnosticGoldenTool/diagnostics-golden.txt` (`ordering/catch-all-is-not-last`).
+
+### Requirement: Route scope folds inside controller scope, first match wins
+The forwarder SHALL try mappings in route-then-controller order, one per error type, the first match
+winning: any later mapping of an error type already mapped is dropped, so a route-scope mapping wins
+over a controller-scope mapping of the same type.
+
+#### Scenario: the same error at both scopes
+- **WHEN** `TaskListController` maps `NoSuchTask` to `.internalServerError`, its `summariseTask` (`GET /api/v1/tasks/{id}/summary`) maps `NoSuchTask` to `.notFound`, its `deleteTask` (`POST /api/v1/tasks/{id}/delete`) maps nothing and documents a 500, and both handlers throw `NoSuchTask` for the id `missing`
+- **THEN** `GET /api/v1/tasks/missing/summary` answers `404`, and `POST /api/v1/tasks/missing/delete`, whose operation does not map it, answers `500`
+
+Pinned by: `.github/workflows/build.yml` (probes `mappedDocumented`, `mappedController`).
+
+### Requirement: Terminal-scoped mappings are exempt from the declared-status rule
+A mapping of `DecodingError`, `Error` or `Swift.Error` SHALL NOT be required to name a documented
+status. It SHALL be emitted in the forwarder only where the operation documents its status, in which
+case its form is checked as any other mapping's, and SHALL always be offered to the terminal. A
+mapping of `WireOpenAPIRequestValidationError` SHALL be offered to the terminal as well as emitted in
+the forwarder, and remains subject to the declared-status rule.
+
+#### Scenario: a pair form on `DecodingError` against a bodied response
+- **WHEN** `opA` declares `@ErrorResponse(DecodingError.self, .notFound)` and documents a 404 with a body
+- **THEN** WireOpenAPIGen reports `@ErrorResponse(DecodingError.self, .notFound) on 'opA' maps to a 404 response that carries a body, so a status alone cannot construct it. Supply one — @ErrorResponse(DecodingError.self, .notFound, { e in … }).`
+
+Pinned by: `Sources/DiagnosticGoldenTool/diagnostics-golden.txt` (`route-scope/terminal-scoped-pair-form-against-a-bodied-response`).
+
+### Requirement: The terminal answers what the forwarder did not
+`WireOpenAPIRoutes.invoke` SHALL answer an error thrown by the generated handler by trying, in order:
+the operation's terminal `rejectionResponse` mappings against the error; then, when the error or its
+`ServerError.underlyingError` is a `DecodingError`, the converted `WireOpenAPIRequestValidationError`
+against the same mappings and otherwise its own 422 answer; then any `HTTPResponseConvertible`
+conformance, which is how `ServerError` answers; and otherwise it SHALL rethrow.
+
+#### Scenario: malformed JSON on an operation mapping the validation error
+- **WHEN** `createTask` (`POST /api/v1/tasks/new`) requires an `application/json` body and maps `WireOpenAPIRequestValidationError` to its documented 422, and `POST /api/v1/tasks/new?title=x` sends `Content-Type: application/json` with the body `not json`
+- **THEN** the answer is `422`
+
+#### Scenario: a missing body and a wrong content type
+- **WHEN** `createTask` (`POST /api/v1/tasks/new`) requires an `application/json` body, and `POST /api/v1/tasks/new?title=hello` sends no body, and separately sends `Content-Type: text/plain`
+- **THEN** the answers are `400` and `415`
+
+Pinned by: `.github/workflows/build.yml` (probes `mappedDecode`, `mappedDecodeInside`, `missingBody`, `wrongType`).
+
+### Requirement: A terminal-side mapped response sets only `Content-Type`
+The mapping closure WireOpenAPIGen emits for the terminal's `rejectionResponse`, whose builder the
+scope-entry closure passed to `WireOpenAPIRoutes.refuse` shares, SHALL unwrap
+`ServerError.underlyingError` before matching, SHALL answer a pair-form mapping with
+`HTTPResponse(status:)` and no body, and SHALL answer a body-form mapping with the closure's value
+encoded by a default `JSONEncoder` under the single header `Content-Type: application/json`. A body
+that fails to encode SHALL fall through to the next clause.
+
+#### Scenario: a body-form mapping answered by the scope-entry closure
+- **WHEN** `GatedTaskController` maps `Unauthenticated` with `{ _ in Components.Schemas.Problem(message: "no user") }` and the scope refuses
+- **THEN** the answer is `401` with a body containing `"message":"no user"`
+
+Pinned by: `.github/workflows/build.yml` (probe `gated`) pins the status and body of a body-form mapping through the scope-entry closure. The terminal's `rejectionResponse` path, the pair-form answer, the single `Content-Type` header and the encode-failure fall-through are pinned by nothing yet.
+
+### Requirement: A failure entering the request scope is answered by controller-scope mappings
+For a `@Scoped(seed:)` controller with controller-scope mappings, the generated terminal SHALL enter
+the scope through `WireOpenAPIRoutes.enteringScope` and, on failure, call `WireOpenAPIRoutes.refuse`
+with a closure built from the controller-scope mappings only. `refuse` SHALL try that closure, then
+`HTTPResponseConvertible`, and otherwise rethrow, without reading the request body. A controller with
+no controller-scope mappings SHALL enter the scope without a refusal closure, so a failure propagates
+unanswered by mappings.
+
+This diverges from wire-mvc, which catches a scope-entry throw in the same `catch` as a handler throw
+and maps it with route-scope then controller-scope mappings, answering an unmatched one with its
+built-in 500. Aligning with wire-mvc is tracked in
+https://github.com/swift-wire/wire-open-api/issues/109.
+
+#### Scenario: a binding that throws while the scope is built
+- **WHEN** the `@Scoped(seed: HTTPRequest.self)` `GatedTaskController` implements `gatedTask` (`GET /api/v1/tasks/{id}/gated`), maps `Unauthenticated` at controller scope with `{ _ in Components.Schemas.Problem(message: "no user") }`, and injects `RequestGate`, whose `init(seed:)` throws `Unauthenticated` without an `x-user` header; an app-wide `@Middleware` adds `x-served-by: wire-open-api` to every response; and `GET /api/v1/tasks/42/gated` arrives without an `x-user` header
+- **THEN** the answer is `401` with `"message":"no user"` and the global middleware's `x-served-by: wire-open-api` header
+
+#### Scenario: the same operation with the header
+- **WHEN** the request carries `x-user: ada`, and `gatedTask`'s handler answers a `Task` titled `task-<id> for <RequestGate.user>`
+- **THEN** the answer is `200` with `"title":"task-42 for ada"`
+
+Pinned by: `.github/workflows/build.yml` (probes `gated`, `gatedOK`, `gatedServedBy`).
+
+### Requirement: A scoped controller's mapping status is declared even by operations that shadow it
+A scope-entry failure is answered by the controller-scope mappings whichever operation was
+requested, and shadowing cannot prevent it, because an operation's own mappings are not consulted at
+scope entry. So for a `@Scoped(seed:)` controller's
+mapping that is not terminal-scoped, WireOpenAPIGen SHALL report once against the controller every
+operation that shadows the mapping and whose document lacks its status:
+`@ErrorResponse(<E>.self, .<status>) on '<Controller>' also answers a failure entering its request
+scope, which happens before an operation is dispatched — so it applies to <operations> too, despite
+their own mapping of the same error, and the document does not declare <code> there. Add it, or drop
+the controller-scope mapping.` Operations the mapping covers are checked by *A controller-scope
+mapping is declared by every operation it covers*, not by this rule. This rule exists only because
+scope entry ignores route-scope mappings, and is expected to be removed when that is aligned with
+wire-mvc in https://github.com/swift-wire/wire-open-api/issues/109.
+
+#### Scenario: a shadowing operation without the status
+- **WHEN** the `@Scoped(seed: HTTPRequest.self)` `GateController` declares `@ErrorResponse(Unauthenticated.self, .unauthorized)`, and its operation `opB` declares `@ErrorResponse(Unauthenticated.self, .forbidden)`, documents a 403, and documents no 401
+- **THEN** WireOpenAPIGen reports `@ErrorResponse(Unauthenticated.self, .unauthorized) on 'GateController' also answers a failure entering its request scope, which happens before an operation is dispatched — so it applies to 'opB' too, despite their own mapping of the same error, and the document does not declare 401 there. Add it, or drop the controller-scope mapping.`
+
+Pinned by: nothing yet.
+
+## Related specifications
+
+- [schema-validation](../schema-validation/spec.md)
+- [controller-collation](../controller-collation/spec.md)
+- [operation-forms](../operation-forms/spec.md)
+- [route-mounting](../route-mounting/spec.md)
+- [document-reading](../document-reading/spec.md)
+- [build-plugins-and-gen-cli](../build-plugins-and-gen-cli/spec.md)
+- [wire-mvc error-response-tiers](https://github.com/swift-wire/wire-mvc/blob/main/openspec/specs/error-response-tiers/spec.md)
+- [wire-mvc request-scope](https://github.com/swift-wire/wire-mvc/blob/main/openspec/specs/request-scope/spec.md)
