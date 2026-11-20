@@ -4,9 +4,30 @@
 
 How wire-mvc's `@ErrorResponse` applies to OpenAPI operations, and how a failure entering a request
 scope is answered. WireOpenAPIGen checks each mapping against the document, applies the mappings in
-the operation's forwarder so a mapped error is answered as one of the document's own responses, and hands the mappings only matchable outside the forwarder to the terminal in
+the operation's forwarder so a mapped error is answered as one of the document's own responses, and hands the mappings only matchable outside the forwarder to the route terminal in
 `WireOpenAPIRoutes`. The wire-mvc tier model and request-scope model are specified in wire-mvc and
 linked below; this spec states the OpenAPI adaptation.
+
+Terms used below:
+
+- **Forwarder** and **route terminal**: as defined in
+  [operation-forms](../operation-forms/spec.md). The forwarder calls the controller method, so it
+  sees what the handler throws; the route terminal calls the forwarder, so it also sees what fails
+  before the forwarder is entered.
+- **Route scope** and **controller scope**: an `@ErrorResponse` written on an operation's method, and
+  one written on the `@OpenAPIController` type, which applies to all of its operations.
+- **Covers** and **shadows**: a controller-scope mapping *covers* each of the controller's operations
+  that does not map the same error type itself. An operation that does map it *shadows* the
+  controller's mapping, whose forwarder clause is then never reached for that operation.
+- **Scope entry**: building a `@Scoped(seed:)` controller's request scope for one request. It happens
+  in the route terminal before the forwarder is entered, so before any operation's handler runs, and
+  a binding that throws during it fails the request with no operation's mappings around it.
+- **Terminal-scoped mapping**: a mapping of `DecodingError`, `Error` or `Swift.Error`, the error
+  types that can be thrown before the forwarder is entered, when the generated server rejects a
+  request body. The route terminal is offered such a mapping in addition to the forwarder, and the
+  declared-status rules do not apply to it; see *Terminal-scoped mappings are exempt from the
+  declared-status rule*. The name says where the mapping can additionally match, not that it lives
+  only at the terminal.
 
 Rationale: [WireOpenAPIAdvanced](../../../Documentation/Notes/WireOpenAPIAdvanced.md).
 Documentation: [ScopeAndErrors](../../../Sources/WireOpenAPI/WireOpenAPI.docc/ScopeAndErrors.md).
@@ -109,8 +130,8 @@ Pinned by: nothing yet.
 
 ### Requirement: A controller-scope mapping is declared by every operation it covers
 For a controller-scope mapping that is not terminal-scoped, WireOpenAPIGen SHALL report once against
-the controller every covered operation, that is every operation not mapping the same error type
-itself, whose document lacks the status: `@ErrorResponse(<E>.self, .<status>) on '<Controller>' maps
+the controller every operation the mapping covers whose document lacks the status, leaving out
+operations that shadow it: `@ErrorResponse(<E>.self, .<status>) on '<Controller>' maps
 to a status the document does not declare for <operations>. A mapped error is answered as one of the
 operation's own responses, so every operation the mapping covers has to declare <code> — add it there,
 or move the mapping to the operations that do.` There is no `.internalServerError` exemption at this
@@ -137,19 +158,6 @@ concerned.
 - **THEN** WireOpenAPIGen reports `@ErrorResponse(Gone.self, .notFound) on 'GateController' maps to a 404 response that carries a body for 'opA', so a status alone cannot construct it. Supply one — @ErrorResponse(Gone.self, .notFound, { e in … }).`
 
 Pinned by: `Sources/DiagnosticGoldenTool/diagnostics-golden.txt` (`controller-scope/covered-operations-disagree-about-a-body`, `controller-scope/pair-form-against-a-bodied-response`, `controller-scope/closure-form-against-a-bare-response`, `controller-scope/unconstructible-content-type`, `accepted/per-operation-forms-are-the-remedy-for-disagreement`).
-
-### Requirement: A scoped controller's mapping is declared by operations that shadow it
-For a `@Scoped(seed:)` controller's mapping that is not terminal-scoped, WireOpenAPIGen SHALL also
-require an operation that maps the same error type itself to document the controller mapping's status, reporting `@ErrorResponse(<E>.self,
-.<status>) on '<Controller>' also answers a failure entering its request scope, which happens before
-an operation is dispatched — so it applies to <operations> too, despite their own mapping of the same
-error, and the document does not declare <code> there. Add it, or drop the controller-scope mapping.`
-
-#### Scenario: a shadowing operation without the status
-- **WHEN** a `@Scoped(seed: HTTPRequest.self)` controller maps `Unauthenticated` to `.unauthorized`, and one of its operations maps `Unauthenticated` itself and documents no 401
-- **THEN** WireOpenAPIGen reports that message naming the operation
-
-Pinned by: nothing yet.
 
 ### Requirement: A catch-all is last
 WireOpenAPIGen SHALL reject a `@ErrorResponse(Error.self, …)` or `@ErrorResponse(Swift.Error.self, …)`
@@ -235,6 +243,24 @@ unanswered by mappings.
 - **THEN** the answer is `200` with `"title":"task-42 for ada"`
 
 Pinned by: `.github/workflows/build.yml` (probes `gated`, `gatedOK`, `gatedServedBy`).
+
+### Requirement: A scoped controller's mapping status is declared even by operations that shadow it
+A scope-entry failure is answered by the controller-scope mappings whichever operation was
+requested, and shadowing cannot prevent it: an operation's own mapping matches only what its handler
+throws, and scope entry fails before any handler runs. So for a `@Scoped(seed:)` controller's
+mapping that is not terminal-scoped, WireOpenAPIGen SHALL report once against the controller every
+operation that shadows the mapping and whose document lacks its status:
+`@ErrorResponse(<E>.self, .<status>) on '<Controller>' also answers a failure entering its request
+scope, which happens before an operation is dispatched — so it applies to <operations> too, despite
+their own mapping of the same error, and the document does not declare <code> there. Add it, or drop
+the controller-scope mapping.` Operations the mapping covers are checked by *A controller-scope
+mapping is declared by every operation it covers*, not by this rule.
+
+#### Scenario: a shadowing operation without the status
+- **WHEN** the `@Scoped(seed: HTTPRequest.self)` `GateController` declares `@ErrorResponse(Unauthenticated.self, .unauthorized)`, and its operation `opB` declares `@ErrorResponse(Unauthenticated.self, .forbidden)`, documents a 403, and documents no 401
+- **THEN** WireOpenAPIGen reports `@ErrorResponse(Unauthenticated.self, .unauthorized) on 'GateController' also answers a failure entering its request scope, which happens before an operation is dispatched — so it applies to 'opB' too, despite their own mapping of the same error, and the document does not declare 401 there. Add it, or drop the controller-scope mapping.`
+
+Pinned by: nothing yet.
 
 ## Related specifications
 
