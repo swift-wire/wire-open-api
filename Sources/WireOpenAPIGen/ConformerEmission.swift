@@ -428,6 +428,9 @@ extension DirectDispatchEmitter {
                 .map { bodyBinding($0, in: operation, indent: indent) + "\n" } ?? "")
             + resolved
         let call = "try await \(subject).\(operation.methodName)(\(arguments.joined(separator: ", ")))"
+        guard !operation.isResponseTuple, !operation.returnsStatus, !operation.returnsHeaders else {
+            return "\(prelude)\(indent)let wireOpenAPIResult = \(call)\n" + tupleResponse(operation, indent: indent)
+        }
         let response = selectedResponse(for: operation)
         let caseName = GeneratorStatusNames.safeName(for: response.code)
         guard operation.returnType != nil else {
@@ -461,6 +464,13 @@ extension DirectDispatchEmitter {
             // The fallback for a document declaring no success at all. `diagnoseTypedResponses` has
             // already rejected that, so it asserts nothing because it describes nothing.
             ?? SpecResponse(code: 200, contentTypes: ["application/json"], assertions: .none)
+    }
+
+    /// Every response this handler can construct: the one ``selectedResponse(for:)`` picks, or — when the
+    /// handler returns its status — each success the document declares, which is the set it chooses from.
+    func candidateResponses(for operation: DiscoveredOperation) -> [SpecResponse] {
+        guard operation.returnsStatus else { return [selectedResponse(for: operation)] }
+        return (operationRoutes[operation.operationID]?.responses ?? []).filter { (200..<300).contains($0.code) }
     }
 
     /// Unwrapping the request body out of the generated `Input.Body` enum.

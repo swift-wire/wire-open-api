@@ -509,6 +509,52 @@ from the document, and the handler is checked against it.
 `@JSONResponse(status:)` and `@ResponseStatus(_:)` name the response where the document declares more
 than one success — split on whether the handler returns a body, the same split WireMVC draws.
 
+**Choosing among them per call (#98).** A name fixes one status for every call, which is wrong for
+find-or-create (201 new, 200 found) and accepted-or-done (202, 200): the status is known only after the
+handler has run. Before this, such an operation had to be `@RawOperation` — media-silo's server carried
+nine of them for this reason alone, each re-implementing the body unwrap and every error mapping by hand.
+
+The answer is WireMVC's response tuple, because one binding vocabulary for both authoring styles is the
+point of the shim and WireMVC already had the shape (swift-wire/wire-mvc#74). It is narrowed to what the
+document lets the compiler check: `(status:body:)` and `(headers:body:)`. Swift has no one-element
+labelled tuple, so the bodiless forms are the status or the headers returned bare.
+
+The departure is the element types. A WireMVC route returns an `HTTPResponse.Status` and free
+`HTTPFields`. An operation returns an enum of its document's 2xx responses, named as the generated
+`Output` cases are, whose cases carry their response's generated `Headers`. With no status to choose, it
+returns the one success's `Headers`. WireOpenAPIGen reads the enum's declaration from the sources it
+scans and checks the cases and each case's payload against the document. The forwarder switches over
+the enum exhaustively, with no `default`, and passes each payload straight into the generated response.
+`HTTPResponse.Status`, `HTTPFields` and WireMVC's `(status:headers:…)` shapes are build-time errors
+naming the type to write.
+
+This meets the objection that keeps the closure form of `@ErrorResponse` out of operations: a status
+chosen from a value cannot be checked against the document. Here the value's *type* is checked against
+the document instead, so the compiler refuses an undocumented status or header in the handler. Taking free
+`HTTPFields` instead and checking them on every call would answer 500 for a field the response does not
+declare, turning a bug the compiler can catch into one a request has to find. It could also build only
+plain-string headers, because turning field text into the generated `Int` or `Date` is a conversion the
+shim would be choosing for the author (#101). Taking the generated type removes both: the compiler checks the members, and an integer header is an `Int`. The claim that an
+undocumented status or header does not compile is argued, not machine-verified: the package has no
+compile-failure harness, so it was checked once by hand against the fixture.
+
+The author declares the enum, rather than the generator emitting it, because the generator writes only
+into the target it runs for. That is the app's target, which has to see every document's dependencies,
+and controllers routinely live in a library the app depends on. media-silo's do, and so does the
+fixture's `OrderController`. A type emitted into the app would be invisible to every handler in the
+library. The `Headers` types the cases carry are swift-openapi-generator's, emitted into the module that
+owns the document, which every module implementing a typed operation can already see. The declaration
+costs one line per success, and the build checks every line of it.
+
+The build also checks that there is more than one success, that they all agree on a body, and that no
+annotation names a status beside the enum. Whether the successes' body schemas agree is left to the type
+checker: each case's `.json(…)` must accept the one `body` type, exactly as for a single response.
+
+With nothing left to check at run time, the only service breach is a response that fails validation.
+The forwarder rethrows `WireOpenAPIResponseValidationError` past its `@ErrorResponse` clauses, and the
+terminal skips its rejection closure for it, whose catch-all would otherwise answer it, since a
+catch-all is terminal-scoped (#91).
+
 ### Type-driven now, spec-driven validation next
 
 Type-driven emission derives `input.path.id` and `.ok(.init(body: .json(…)))` from the annotations and

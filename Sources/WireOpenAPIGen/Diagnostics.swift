@@ -194,7 +194,9 @@ extension DirectDispatchEmitter {
             for operation in controller.operations where operation.isTyped {
                 guard let route = operationRoutes[operation.operationID] else { continue }
                 let successes = route.responses.filter { (200..<300).contains($0.code) }
-                if let written = operation.responseStatus {
+                if operation.returnsStatus {
+                    diagnoseReturnedStatus(operation, successes: successes)
+                } else if let written = operation.responseStatus {
                     guard
                         route.responses.contains(where: {
                             GeneratorStatusNames.safeName(for: $0.code) == written
@@ -221,12 +223,14 @@ extension DirectDispatchEmitter {
                         '\(operation.operationID)' documents \(successes.isEmpty ? "no" : "\(successes.count)") \
                         success \(successes.count == 1 ? "response" : "responses")\
                         \(declared.isEmpty ? "" : " (\(declared))"), so which one the handler returns cannot \
-                        be inferred. Name it with @JSONResponse(status:) or @ResponseStatus(_:).
+                        be inferred. Name it with @JSONResponse(status:) or @ResponseStatus(_:), or return \
+                        a status enum of them to choose one per call.
                         """,
                         at: operation
                     )
                 }
                 diagnoseResponseShape(operation)
+                diagnoseResponseHeaders(operation)
             }
         }
     }
@@ -323,8 +327,9 @@ extension DirectDispatchEmitter {
                 at: operation
             )
         }
-        do {
-            let selected = selectedResponse(for: operation)
+        // Every response the handler can construct: one, or each documented success when it returns its
+        // status. A status enum has one body to answer with, so all of them must agree on carrying one.
+        for selected in candidateResponses(for: operation) {
             let hasBody = !selected.contentTypes.isEmpty
             if hasBody, selected.contentTypes != ["application/json"] {
                 fail(
@@ -361,9 +366,13 @@ extension DirectDispatchEmitter {
         at operation: DiscoveredOperation? = nil,
         in controller: DiscoveredController? = nil
     ) -> Never {
-        // The owning controller when the caller knows it: a group's controllers can live in different
-        // files, so reporting everything against the first one would point at the wrong source.
-        let source = controller ?? controllers[0]
+        // The owning controller: a group's controllers can live in different files, so reporting
+        // everything against the first one would point at the wrong source. An operation id is unique in a
+        // group, so an operation names its controller when the caller did not.
+        let owner = operation.flatMap { operation in
+            controllers.first { $0.operations.contains { $0.operationID == operation.operationID } }
+        }
+        let source = controller ?? owner ?? controllers[0]
         let line = operation?.line ?? source.line
         FileHandle.standardError.write(Data("\(source.file):\(line): error: \(message)\n".utf8))
         exit(1)

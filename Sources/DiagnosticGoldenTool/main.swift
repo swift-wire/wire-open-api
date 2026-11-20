@@ -254,6 +254,47 @@ func parameterDocument(_ schema: String) -> String {
     """
 }
 
+/// A document whose single operation `opA` declares the given responses, each written in YAML flow style
+/// under its status — for the response-tuple diagnostics, which turn on which successes are documented
+/// and what each carries.
+func responsesDocument(_ responses: [(code: Int, response: String)]) -> String {
+    var lines = [
+        "openapi: 3.1.0", "info: { title: Gate, version: 1.0.0 }", "paths:", "  /opA:", "    get:",
+        "      operationId: opA", "      responses:",
+    ]
+    lines += responses.map { "        '\($0.code)': \($0.response)" }
+    return lines.joined(separator: "\n") + "\n"
+}
+
+let jsonTask = "description: ok, content: { application/json: { schema: { type: string } } }"
+
+/// The status enum `opA`'s response tuple names, spelled as the idiomatic naming strategy these cases
+/// take by default resolves the operation's namespace.
+let opAStatus = "Operations.OpA.SuccessStatus"
+
+/// Where swift-openapi-generator puts `opA`'s responses, under the same strategy.
+let opAOutput = "Operations.OpA.Output"
+
+/// A controller whose single typed `opA` returns `returnType`, under `attributes`, beside a declaration of
+/// `opAStatus` with `statusCases` when there are any. The body is a `fatalError`: these cases are refused
+/// before anything is compiled, and the accept case is not compiled by the tool at all.
+func tupleController(_ returnType: String, attributes: [String] = [], statusCases: [String] = []) -> String {
+    var lines = [
+        "import HTTPTypes", "import Wire", "import WireOpenAPI", "", "@Singleton", "@OpenAPIController",
+        "struct GateController {", "    @Operation",
+    ]
+    lines += attributes.map { "    " + $0 }
+    lines += ["    func opA() async throws -> \(returnType) { fatalError() }", "}"]
+    if !statusCases.isEmpty {
+        lines += [
+            "", "extension Operations.OpA {", "    enum SuccessStatus: Sendable, Hashable {",
+        ]
+        lines += statusCases.map { "        case \($0)" }
+        lines += ["    }", "}"]
+    }
+    return lines.joined(separator: "\n") + "\n"
+}
+
 struct Gate {
     let name: String
     /// Why this case exists, carried into the golden so a reader of the table knows what it protects.
@@ -425,6 +466,173 @@ let gates: [Gate] = [
         summary: "the same document builds when nobody asked for the check — the other half of the rule",
         document: responseDocument("{ type: object, minProperties: 2, properties: { a: { type: string } } }"),
         controller: controller(raw: true, operations: [("opA", [])])
+    ),
+    // Choosing a response: a status enum of the documented successes, each case carrying its response's
+    // generated headers, or — with no status to choose — the one success's headers.
+    Gate(
+        name: "tuple/status-with-one-success",
+        summary: "a returned status chooses among documented successes, so one success leaves no choice",
+        document: responsesDocument([(200, "{ \(jsonTask) }")]),
+        controller: tupleController("(status: \(opAStatus), body: String)", statusCases: ["ok"])
+    ),
+    Gate(
+        name: "tuple/status-with-one-headered-bodiless-success",
+        summary: "the remedy for one success is its own form: here, its generated headers returned bare",
+        document: responsesDocument([
+            (204, "{ description: done, headers: { X-Count: { required: true, schema: { type: integer } } } }")
+        ]),
+        controller: tupleController(opAStatus, statusCases: ["noContent(\(opAOutput).NoContent.Headers)"])
+    ),
+    Gate(
+        name: "tuple/status-with-no-success",
+        summary: "with no documented success, no return shape helps; only the document can",
+        document: responsesDocument([(400, "{ description: bad }")]),
+        controller: tupleController(opAStatus, statusCases: ["badRequest"])
+    ),
+    Gate(
+        name: "tuple/status-beside-an-annotation",
+        summary: "a status returned and a status annotated contradict each other",
+        document: responsesDocument([(200, "{ \(jsonTask) }"), (201, "{ \(jsonTask) }")]),
+        controller: tupleController(
+            "(status: \(opAStatus), body: String)",
+            attributes: ["@JSONResponse(status: .created)"],
+            statusCases: ["ok", "created"]
+        )
+    ),
+    Gate(
+        name: "tuple/successes-disagree-on-a-body",
+        summary: "the handler has one body to answer every success with, so all must agree on carrying one",
+        document: responsesDocument([(200, "{ \(jsonTask) }"), (204, "{ description: none }")]),
+        controller: tupleController("(status: \(opAStatus), body: String)", statusCases: ["ok", "noContent"])
+    ),
+    Gate(
+        name: "tuple/not-a-response-shape",
+        summary: "the labels are read in WireMVC's canonical order, and anything else is not a response tuple",
+        document: responsesDocument([(200, "{ \(jsonTask) }"), (201, "{ \(jsonTask) }")]),
+        controller: tupleController("(body: String, status: \(opAStatus))")
+    ),
+    Gate(
+        name: "tuple/status-is-an-http-response-status",
+        summary: "a WireMVC route's status type would let the handler return one the document does not declare",
+        document: responsesDocument([
+            (200, "{ \(jsonTask), headers: { ETag: { schema: { type: string } } } }"),
+            (201, "{ \(jsonTask), headers: { Location: { required: true, schema: { type: string } } } }"),
+        ]),
+        controller: tupleController("(status: HTTPResponse.Status, body: String)")
+    ),
+    Gate(
+        name: "tuple/status-enum-not-declared",
+        summary: "the cases are checked against the document, so the enum has to be one this build can read",
+        document: responsesDocument([(200, "{ \(jsonTask) }"), (201, "{ \(jsonTask) }")]),
+        controller: tupleController("(status: \(opAStatus), body: String)")
+    ),
+    Gate(
+        name: "tuple/status-enum-cases-differ",
+        summary: "the enum is what the compiler holds the handler to, so it must be exactly the successes",
+        document: responsesDocument([(200, "{ \(jsonTask) }"), (201, "{ \(jsonTask) }")]),
+        controller: tupleController("(status: \(opAStatus), body: String)", statusCases: ["ok", "accepted"])
+    ),
+    Gate(
+        name: "tuple/http-fields-beside-a-status",
+        summary: "WireMVC's (status:headers:body:) is not an operation's shape: headers travel in the cases",
+        document: responsesDocument([
+            (200, "{ \(jsonTask), headers: { ETag: { schema: { type: string } } } }"),
+            (201, "{ \(jsonTask), headers: { Location: { required: true, schema: { type: string } } } }"),
+        ]),
+        controller: tupleController(
+            "(status: \(opAStatus), headers: HTTPFields, body: String)",
+            statusCases: ["ok(\(opAOutput).Ok.Headers)", "created(\(opAOutput).Created.Headers)"]
+        )
+    ),
+    Gate(
+        name: "tuple/case-without-its-headers",
+        summary: "a headered response's case must carry its headers, or the response could not be built",
+        document: responsesDocument([
+            (200, "{ \(jsonTask), headers: { ETag: { schema: { type: string } } } }"),
+            (201, "{ \(jsonTask), headers: { Location: { required: true, schema: { type: string } } } }"),
+        ]),
+        controller: tupleController(
+            "(status: \(opAStatus), body: String)",
+            statusCases: ["ok(\(opAOutput).Ok.Headers)", "created"]
+        )
+    ),
+    Gate(
+        name: "tuple/case-with-the-wrong-headers",
+        summary: "a case carries exactly its own response's headers, not another response's",
+        document: responsesDocument([
+            (200, "{ \(jsonTask), headers: { ETag: { schema: { type: string } } } }"),
+            (201, "{ \(jsonTask), headers: { Location: { required: true, schema: { type: string } } } }"),
+        ]),
+        controller: tupleController(
+            "(status: \(opAStatus), body: String)",
+            statusCases: ["ok(\(opAOutput).Ok.Headers)", "created(\(opAOutput).Ok.Headers)"]
+        )
+    ),
+    Gate(
+        name: "tuple/case-with-headers-its-response-lacks",
+        summary: "a response declaring no headers has no Headers type for its case to carry",
+        document: responsesDocument([(200, "{ \(jsonTask) }"), (201, "{ \(jsonTask) }")]),
+        controller: tupleController(
+            "(status: \(opAStatus), body: String)",
+            statusCases: ["ok", "created(\(opAOutput).Created.Headers)"]
+        )
+    ),
+    Gate(
+        name: "tuple/headers-as-http-fields",
+        summary: "free header fields would let the handler send headers the document does not declare",
+        document: responsesDocument([
+            (201, "{ \(jsonTask), headers: { Location: { required: true, schema: { type: string } } } }")
+        ]),
+        controller: tupleController("(headers: HTTPFields, body: String)")
+    ),
+    Gate(
+        name: "tuple/headers-of-another-response",
+        summary: "the returned headers are exactly the one success's generated Headers",
+        document: responsesDocument([
+            (201, "{ \(jsonTask), headers: { Location: { required: true, schema: { type: string } } } }")
+        ]),
+        controller: tupleController("(headers: \(opAOutput).Ok.Headers, body: String)")
+    ),
+    Gate(
+        name: "tuple/headers-for-a-headerless-response",
+        summary: "a response declaring no headers has none to return",
+        document: responsesDocument([(200, "{ \(jsonTask) }")]),
+        controller: tupleController("(headers: \(opAOutput).Ok.Headers, body: String)")
+    ),
+    Gate(
+        name: "tuple/required-header-not-returned",
+        summary: "a required header has to come from somewhere, and a handler returning the body alone has none",
+        document: responsesDocument([
+            (201, "{ \(jsonTask), headers: { Location: { required: true, schema: { type: string } } } }")
+        ]),
+        controller: tupleController("String")
+    ),
+    Gate(
+        name: "accepted/status-tuple-over-two-successes",
+        summary: "the shape the tuple diagnostics point at: a status chosen among two documented successes",
+        document: responsesDocument([
+            (200, "{ \(jsonTask), headers: { ETag: { schema: { type: string } } } }"),
+            (201, "{ \(jsonTask), headers: { Location: { required: true, schema: { type: string } } } }"),
+        ]),
+        controller: tupleController(
+            "(status: \(opAStatus), body: String)",
+            statusCases: ["ok(\(opAOutput).Ok.Headers)", "created(\(opAOutput).Created.Headers)"]
+        )
+    ),
+    Gate(
+        name: "accepted/headers-of-any-schema",
+        summary: "headers are returned as their generated type, so an integer header needs no conversion",
+        document: responsesDocument([
+            (200, "{ \(jsonTask), headers: { X-Count: { required: true, schema: { type: integer } } } }")
+        ]),
+        controller: tupleController("(headers: \(opAOutput).Ok.Headers, body: String)")
+    ),
+    Gate(
+        name: "accepted/headers-of-a-referenced-response",
+        summary: "a referenced response's headers are named from its component, as the generator names them",
+        document: responsesDocument([(201, "{ $ref: '#/components/responses/Located' }")])
+            + "components:\n  responses:\n    Located: { \(jsonTask), headers: { Location: { schema: { type: string } } } }\n",
+        controller: tupleController("(headers: Components.Responses.Located.Headers, body: String)")
     ),
     // The one accept case, and it earns its place: it is the arrangement the "disagree" message tells the
     // author to move to. A diagnostic whose advice does not work is worse than no diagnostic.

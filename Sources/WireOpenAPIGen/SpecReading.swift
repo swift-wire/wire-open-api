@@ -191,6 +191,19 @@ struct SpecResponse {
     let contentTypes: [String]
     /// What the JSON schema of this response asserts — checked only when `wire-openapi.yaml` asks for it.
     let assertions: SpecAssertions
+    /// The headers it declares, in document order. A response declaring any has a generated `Headers`
+    /// type, which is what a typed handler returns them as.
+    var headers: [SpecResponseHeader] = []
+    /// The `components/responses` key it references, when it is a reference rather than inline. The
+    /// generator then names its type from the component, not from the operation and status.
+    var component: String?
+}
+
+/// One `headers:` entry of a response.
+struct SpecResponseHeader {
+    /// The name as the document writes it.
+    let name: String
+    let isRequired: Bool
 }
 
 /// The `requestBody:` entry: whether it must be present, and what it can be.

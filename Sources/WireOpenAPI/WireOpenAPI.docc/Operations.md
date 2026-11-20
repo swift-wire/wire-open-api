@@ -34,6 +34,95 @@ WireMVC `@Get` route uses — the same types, not a parallel set. That is the wh
 unification: one binding vocabulary whether a route came from a document or from an annotation,
 so what you learn on one applies to the other.
 
+## Choosing the response at run time
+
+Which response an operation answers with is the document's to declare. When it declares one
+success, a typed handler answers with it. When it declares several, the handler names one with
+`@JSONResponse(status:)` or `@ResponseStatus(_:)` — once, for every call.
+
+Some operations cannot decide that until the handler has run. Find-or-create is the common one:
+201 with a new resource, or 200 with the one a natural key already names. For those, return a
+**status enum** of the operation's documented successes beside the body, in WireMVC's
+`(status:body:)` tuple:
+
+```swift
+@Operation
+func registerTask(@Query id: String) async throws
+    -> (status: Operations.RegisterTask.SuccessStatus, body: Task)
+{
+    let (task, created) = try store.register(id)
+    return created
+        ? (.created(.init(location: "/tasks/\(id)")), task)
+        : (.ok(.init(eTag: task.version)), task)
+}
+
+extension Operations.RegisterTask {
+    enum SuccessStatus: Sendable, Hashable {
+        case ok(Operations.RegisterTask.Output.Ok.Headers)
+        case created(Operations.RegisterTask.Output.Created.Headers)
+    }
+}
+```
+
+You declare the enum yourself, beside the controller. It has one case per success the document
+declares for the operation, named as the generated `Output` cases are (`ok`, `created`,
+`noContent`). A case whose response declares headers carries that response's generated
+`Headers` as its one associated value; a case whose response declares none carries nothing.
+The build checks both against the document, and its errors name the declaration to write.
+Nesting it as `Operations.<Operation>.SuccessStatus` is the convention they suggest, and
+swift-openapi-generator emits nothing by that name.
+
+**Neither a status nor a header the document does not declare can be written.** The enum has no
+case for an undocumented status, so the compiler refuses one
+(`type 'Operations.RegisterTask.SuccessStatus' has no member 'accepted'`). A case's headers are
+the generated type, so it has no member for an undeclared header either
+(`extra argument 'cacheControl' in call`), and a required header is a required argument. The
+generated forwarder switches over the enum with no `default` and passes each case's headers
+straight into the generated response, so nothing about the status or the headers is checked at
+run time. Because the headers are the generated type, a header of any schema works: an
+`integer` header is an `Int` member, set as one. This is argued from how the pieces fit, not
+machine-verified. The package has no harness that asserts a build fails, so the two compiler
+errors above were checked once by hand.
+
+When there is no status to choose but the one success declares headers, return its generated
+`Headers` beside the body, as `(headers:body:)`:
+
+```swift
+@Operation
+func taskVersion(@Path id: String) async throws
+    -> (headers: Operations.TaskVersion.Output.Ok.Headers, body: Task)
+```
+
+A response declared under `components/responses` and referenced is named from its component
+instead, as the generator names it: `Components.Responses.<Name>.Headers`.
+
+Swift has no one-element labelled tuple, so an operation whose successes carry no body returns
+the enum, or the generated `Headers`, on its own:
+
+```swift
+@Operation
+func touchTask(@Path id: String) async throws -> Operations.TouchTask.SuccessStatus {
+    id == "later" ? .accepted(.init(retryAfter: 30)) : .noContent
+}
+```
+
+The return is read as a status when it names an enum declared in the sources the build reads, and
+as headers when it is spelled as a generated `Headers` type. Anything else is the body. Free
+`HTTPFields`, `HTTPResponse.Status`, and WireMVC's `(status:headers:body:)` and
+`(status:headers:)` are build-time errors naming the type to return instead: each would let the
+handler send something its document does not declare.
+
+The build also checks that there is more than one success to choose between, that they all agree
+on whether they carry a body, and that no annotation names a status as well.
+
+The serializer the generator emits writes a typed header value with URI coding, so a `/` or a
+`"` in a header value goes out percent-encoded (`/tasks/1` as `%2Ftasks%2F1`). That is the
+generator's behaviour for every typed response header, not something these forms add.
+
+This answers the objection the closure form of `@ErrorResponse` meets: a status chosen from a
+value cannot be checked against the document. A status enum does not choose freely. Its cases and
+their headers are held to the document's successes when the code is built.
+
 ## Why identity is declared rather than inferred
 
 Both attributes take an optional operation id, and bare they mean "the method's own name is the

@@ -29,8 +29,18 @@ struct DiscoveredOperation {
     /// `@Operation`: the parameters to bind and the response body type. Empty and nil for a raw one.
     let parameters: [BoundParameter]
     /// The response body's type, or nil when the handler returns nothing — which is how a documented
-    /// no-content response is written.
+    /// no-content response is written. For a response tuple, the type of its `body` element.
     let returnType: String?
+    /// What the return type says about the response beyond its body. Empty for a raw operation.
+    var responseShape = ResponseShape()
+    /// The handler returns a **response tuple**, `(status:body:)` or `(headers:body:)`, rather than the
+    /// body alone.
+    var isResponseTuple: Bool { responseShape.isTuple }
+    /// The handler returns a status enum, in a tuple or bare: it chooses, at run time, which documented
+    /// success it is, and each choice carries its response's headers.
+    var returnsStatus: Bool { responseShape.status }
+    /// The handler returns its one success's generated `Headers`, in a tuple or bare.
+    var returnsHeaders: Bool { responseShape.headersType != nil }
     /// Whether this operation is bound by the typed shim rather than handed the generated `Input`.
     let isTyped: Bool
     /// The status named by `@JSONResponse(status:)` or `@ResponseStatus(_:)`, as written — `created`.
