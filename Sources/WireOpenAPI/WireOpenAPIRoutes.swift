@@ -241,16 +241,16 @@ public enum WireOpenAPIRoutes {
     }
 }
 
-/// Whether an error is the service breaking its own document — a response that failed validation, or a
-/// response tuple the document does not describe — rather than anything the caller did.
+/// Whether an error is the service breaking its own document — a response that failed validation —
+/// rather than anything the caller did.
 ///
-/// The forwarder rethrows both past the author's mappings, and this is the terminal's half of the same
+/// The forwarder rethrows it past the author's mappings, and this is the terminal's half of the same
 /// rule. A catch-all is terminal-scoped, so it is emitted into the rejection closure too, and that closure
 /// is consulted before `HTTPResponseConvertible`: without this check the catch-all would answer the
 /// service's own breach with its status — and, in the closure form, its body — instead of 500 with none.
 func isServiceBreach(_ error: any Error) -> Bool {
     let cause = (error as? ServerError)?.underlyingError ?? error
-    return cause is WireOpenAPIResponseValidationError || cause is WireOpenAPIUndocumentedResponse
+    return cause is WireOpenAPIResponseValidationError
 }
 
 /// Applies an `@ErrorResponse` body closure to the error it matched.

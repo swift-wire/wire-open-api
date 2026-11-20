@@ -4,26 +4,34 @@
 import SwiftParser
 import SwiftSyntax
 
-// The enums a typed operation's response tuple may name as its `status`.
+// The enums a typed operation's response may name as its status.
 //
 // A handler choosing its success at run time returns an enum of the operation's documented successes,
-// declared by its author beside it. The *compiler* then holds the handler to that enum's cases, and this
-// generator holds the cases to the document: they must be exactly the operation's 2xx responses, named
-// as the generated `Output` cases are. Between the two, a status the document does not declare cannot be
-// returned at all.
+// declared by its author beside it. Each case whose response declares headers carries that response's
+// generated `Headers` as its payload, so choosing the case and supplying its headers are one value. The
+// *compiler* then holds the handler to that enum, and this generator holds the enum to the document:
+// its cases must be exactly the operation's 2xx responses, named as the generated `Output` cases are,
+// each carrying exactly the headers its response declares. Between the two, neither a status nor a
+// header the document does not declare can be returned at all.
 //
 // The author declares it, rather than this generator emitting it, because this generator writes into one
 // module only — the one it runs for — and a controller is routinely declared in another: a library the
 // app depends on, which is how a document and its controllers ship together. A type emitted here would
-// be invisible to every handler there. The declaration is read from the same sources the controllers are,
-// so wherever a handler can be scanned, its enum can be.
+// be invisible to every handler there. The `Headers` types it names are swift-openapi-generator's,
+// emitted into the module that owns the document, which any module implementing a typed operation can
+// already see. The declaration is read from the same sources the controllers are, so wherever a handler
+// can be scanned, its enum can be.
+
+/// One enum case: its name, and the types of its associated values as written.
+struct DeclaredCase {
+    let name: String
+    let payload: [String]
+}
 
 /// One enum declaration, by the path it is nested under.
 struct DeclaredEnum {
-    /// The case names, in declaration order.
-    let cases: [String]
-    /// Whether any case carries an associated value — a payload the forwarder has nowhere to send.
-    let hasAssociatedValues: Bool
+    /// The cases, in declaration order.
+    let cases: [DeclaredCase]
 }
 
 /// Every enum in the sources this run reads, keyed by its nesting path without the module —
@@ -93,12 +101,13 @@ private final class EnumScanner: SyntaxVisitor {
             .compactMap { $0.decl.as(EnumCaseDeclSyntax.self) }
             .flatMap(\.elements)
         let key = (path + [node.name.text]).joined(separator: ".")
-        found[key, default: []].append(
-            DeclaredEnum(
-                cases: elements.map(\.name.text),
-                hasAssociatedValues: elements.contains { $0.parameterClause != nil }
+        let cases = elements.map { element in
+            DeclaredCase(
+                name: element.name.text,
+                payload: element.parameterClause?.parameters.map(\.type.trimmedDescription) ?? []
             )
-        )
+        }
+        found[key, default: []].append(DeclaredEnum(cases: cases))
         return push(node.name.text)
     }
     override func visitPost(_ node: EnumDeclSyntax) { path.removeLast() }

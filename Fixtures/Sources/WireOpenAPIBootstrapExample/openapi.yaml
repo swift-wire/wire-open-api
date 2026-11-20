@@ -200,15 +200,31 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Task' }
-  # The bodiless form: two documented successes carrying nothing, chosen per call.
+  # The bodiless form: two documented successes with no content, chosen per call. The 202 says when to
+  # look again, as an integer — a header the handler supplies as its generated type, not as text.
   /tasks/{id}/touch:
     post:
       operationId: touchTask
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
       responses:
-        '202': { description: Touch queued }
+        '202':
+          description: Touch queued
+          headers:
+            Retry-After: { required: true, schema: { type: integer } }
         '204': { description: Touched }
+  # One bodiless success with a required integer header: no status to choose and no body, so the handler
+  # returns the response's generated headers alone.
+  /tasks/{id}/seen:
+    post:
+      operationId: markSeen
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '204':
+          description: Marked seen
+          headers:
+            X-Seen-Count: { required: true, schema: { type: integer } }
   # One success, with a required header: no status to choose, so the tuple is (headers:body:).
   /tasks/{id}/version:
     get:

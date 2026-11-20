@@ -71,43 +71,83 @@ accepted
 
 ## tuple/status-with-one-success
 # a returned status chooses among documented successes, so one success leaves no choice
-rejected: Controller.swift:9: error: 'opA' returns its status in a response tuple, but documents only .ok, so there is nothing to choose between. Return the body alone, or document the other successes.
+rejected: Controller.swift:9: error: 'opA' returns a status enum, but documents only .ok, so there is nothing to choose between. Return the body alone, or document the other successes.
+
+## tuple/status-with-one-headered-bodiless-success
+# the remedy for one success is its own form: here, its generated headers returned bare
+rejected: Controller.swift:9: error: 'opA' returns a status enum, but documents only .noContent, so there is nothing to choose between. Return `Operations.OpA.Output.NoContent.Headers`, or document the other successes.
+
+## tuple/status-with-no-success
+# with no documented success, no return shape helps; only the document can
+rejected: Controller.swift:9: error: 'opA' returns a status enum, but documents no success response, so there is nothing to choose between. Document the successes it can answer with.
 
 ## tuple/status-beside-an-annotation
 # a status returned and a status annotated contradict each other
-rejected: Controller.swift:10: error: 'opA' returns its status in a response tuple and also names one with @JSONResponse(status: .created). The two contradict each other — drop the annotation, or return the body alone.
+rejected: Controller.swift:10: error: 'opA' returns a status enum and also names a status with @JSONResponse(status: .created). The two contradict each other — drop the annotation, or return without the status enum.
 
 ## tuple/successes-disagree-on-a-body
-# a tuple has one body element, so every success it can answer with must carry one
-rejected: Controller.swift:9: error: 'opA' returns its status in a response tuple with a body, but its documented 204 success carries none. Every success a response tuple can answer with has to agree on whether it carries a body — document them alike, or use @RawOperation.
-
-## tuple/header-the-shim-cannot-build
-# a returned field becomes a typed member, which only a plain string schema is built from
-rejected: Controller.swift:9: error: 'opA' returns header fields, but its 200 response declares 'X-Count' with a schema other than a plain string, which the typed shim cannot build from a field value. Use @RawOperation for this operation.
-
-## tuple/required-header-not-returned
-# a required header has to come from somewhere, and a handler returning no fields has none
-rejected: Controller.swift:9: error: 'opA' documents a 201 response with the required header 'Location', but its handler returns no header fields. Return (status:headers:body:) and set it.
+# the handler has one body to answer every success with, so all must agree on carrying one
+rejected: Controller.swift:9: error: 'opA' returns a status enum with a body, but its documented 204 success carries none. Every success a status enum can answer with has to agree on whether it carries a body — document them alike, or use @RawOperation.
 
 ## tuple/not-a-response-shape
 # the labels are read in WireMVC's canonical order, and anything else is not a response tuple
-rejected: Controller.swift:9: error: the response tuple returned by @Operation 'opA' is labelled (body:status:), which is not a response shape — write one of (status:body:), (status:headers:body:), (status:headers:) or (headers:body:).
+rejected: Controller.swift:9: error: the response tuple returned by @Operation 'opA' is labelled (body:status:), which is not a response shape — write (status:body:) or (headers:body:).
+
+## tuple/status-is-an-http-response-status
+# a WireMVC route's status type would let the handler return one the document does not declare
+rejected: Controller.swift:9: error: 'opA' returns its status as 'HTTPResponse.Status', which would let the handler answer with a status its document does not declare. Return an enum of the documented successes instead. Declare `extension Operations.OpA { enum SuccessStatus: Sendable, Hashable { case ok(Operations.OpA.Output.Ok.Headers); case created(Operations.OpA.Output.Created.Headers) } }` and return `(status: Operations.OpA.SuccessStatus, body: String)`.
+
+## tuple/status-enum-not-declared
+# the cases are checked against the document, so the enum has to be one this build can read
+rejected: Controller.swift:9: error: 'opA' returns its status as 'Operations.OpA.SuccessStatus', which names no enum declared in the sources this build reads. The status has to be an enum of the documented successes. Declare `extension Operations.OpA { enum SuccessStatus: Sendable, Hashable { case ok; case created } }` and return `(status: Operations.OpA.SuccessStatus, body: String)`.
+
+## tuple/status-enum-cases-differ
+# the enum is what the compiler holds the handler to, so it must be exactly the successes
+rejected: Controller.swift:9: error: 'opA' returns its status as 'Operations.OpA.SuccessStatus', whose cases must be exactly the operation's documented successes (.ok, .created). It declares .accepted, which the document does not, and omits .created, which the document declares.
+
+## tuple/http-fields-beside-a-status
+# WireMVC's (status:headers:body:) is not an operation's shape: headers travel in the cases
+rejected: Controller.swift:9: error: 'opA' returns header fields beside its status, but an operation's headers travel in its status enum: each case whose response declares headers carries them. Declare `extension Operations.OpA { enum SuccessStatus: Sendable, Hashable { case ok(Operations.OpA.Output.Ok.Headers); case created(Operations.OpA.Output.Created.Headers) } }` and return `(status: Operations.OpA.SuccessStatus, body: String)`.
+
+## tuple/case-without-its-headers
+# a headered response's case must carry its headers, or the response could not be built
+rejected: Controller.swift:9: error: 'opA' returns its status as 'Operations.OpA.SuccessStatus', whose case .created carries no headers, but the documented 201 response declares the header 'Location'. Declare it as `case created(Operations.OpA.Output.Created.Headers)`.
+
+## tuple/case-with-the-wrong-headers
+# a case carries exactly its own response's headers, not another response's
+rejected: Controller.swift:9: error: 'opA' returns its status as 'Operations.OpA.SuccessStatus', whose case .created carries (Operations.OpA.Output.Ok.Headers), but the documented 201 response's headers are `Operations.OpA.Output.Created.Headers`. Declare it as `case created(Operations.OpA.Output.Created.Headers)`.
+
+## tuple/case-with-headers-its-response-lacks
+# a response declaring no headers has no Headers type for its case to carry
+rejected: Controller.swift:9: error: 'opA' returns its status as 'Operations.OpA.SuccessStatus', whose case .created carries a payload, but the documented 201 response declares no headers, so there is nothing for it to carry. Declare it as `case created`.
+
+## tuple/headers-as-http-fields
+# free header fields would let the handler send headers the document does not declare
+rejected: Controller.swift:9: error: 'opA' returns its headers as 'HTTPFields', which would let the handler send headers its document does not declare. Return `(headers: Operations.OpA.Output.Created.Headers, body: String)` — the generated headers of its .created response.
+
+## tuple/headers-of-another-response
+# the returned headers are exactly the one success's generated Headers
+rejected: Controller.swift:9: error: 'opA' returns its headers as 'Operations.OpA.Output.Ok.Headers', but its documented .created response's headers are `Operations.OpA.Output.Created.Headers`. Return `(headers: Operations.OpA.Output.Created.Headers, body: String)`.
+
+## tuple/headers-for-a-headerless-response
+# a response declaring no headers has none to return
+rejected: Controller.swift:9: error: 'opA' returns headers, but its documented .ok response declares none. Return the body alone.
+
+## tuple/required-header-not-returned
+# a required header has to come from somewhere, and a handler returning the body alone has none
+rejected: Controller.swift:9: error: 'opA' documents a 201 response with the required header 'Location', but its handler returns no headers. Return `(headers: Operations.OpA.Output.Created.Headers, body: String)` and set it.
 
 ## accepted/status-tuple-over-two-successes
 # the shape the tuple diagnostics point at: a status chosen among two documented successes
 accepted
 
-## tuple/status-is-an-http-response-status
-# a WireMVC route's status type would let the handler return one the document does not declare
-rejected: Controller.swift:9: error: 'opA' returns its status in a response tuple as 'HTTPResponse.Status', which would let the handler answer with a status its document does not declare. Return an enum of the documented successes instead. Declare `extension Operations.OpA { enum SuccessStatus: Sendable, Hashable, CaseIterable { case ok; case created } }` and return `status: Operations.OpA.SuccessStatus`.
+## accepted/headers-of-any-schema
+# headers are returned as their generated type, so an integer header needs no conversion
+accepted
 
-## tuple/status-enum-not-declared
-# the cases are checked against the document, so the enum has to be one this build can read
-rejected: Controller.swift:9: error: 'opA' returns its status in a response tuple as 'Operations.OpA.SuccessStatus', which names no enum declared in the sources this build reads. The status has to be an enum of the documented successes. Declare `extension Operations.OpA { enum SuccessStatus: Sendable, Hashable, CaseIterable { case ok; case created } }` and return `status: Operations.OpA.SuccessStatus`.
-
-## tuple/status-enum-cases-differ
-# the enum is what the compiler holds the handler to, so it must be exactly the successes
-rejected: Controller.swift:9: error: 'opA' returns its status in a response tuple as 'Operations.OpA.SuccessStatus', whose cases must be exactly the operation's documented successes (.ok, .created). It declares .accepted, which the document does not, and omits .created, which the document declares.
+## accepted/headers-of-a-referenced-response
+# a referenced response's headers are named from its component, as the generator names them
+accepted
 
 ## accepted/per-operation-forms-are-the-remedy-for-disagreement
 # each operation takes the form its own documented response requires

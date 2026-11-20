@@ -224,7 +224,7 @@ extension DirectDispatchEmitter {
                         success \(successes.count == 1 ? "response" : "responses")\
                         \(declared.isEmpty ? "" : " (\(declared))"), so which one the handler returns cannot \
                         be inferred. Name it with @JSONResponse(status:) or @ResponseStatus(_:), or return \
-                        (status:body:) to choose one per call.
+                        a status enum of them to choose one per call.
                         """,
                         at: operation
                     )
@@ -328,7 +328,7 @@ extension DirectDispatchEmitter {
             )
         }
         // Every response the handler can construct: one, or each documented success when it returns its
-        // status. A response tuple has one `body` element, so all of them must agree on carrying one.
+        // status. A status enum has one body to answer with, so all of them must agree on carrying one.
         for selected in candidateResponses(for: operation) {
             let hasBody = !selected.contentTypes.isEmpty
             if hasBody, selected.contentTypes != ["application/json"] {

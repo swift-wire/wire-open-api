@@ -3,89 +3,75 @@
 
 import WireOpenAPINaming
 
-// The forwarder body for a typed operation that returns a response tuple.
+// The forwarder body for a typed operation that returns a status enum or its response's headers, in a
+// response tuple or bare.
 
 extension DirectDispatchEmitter {
-    /// What a handler returning a **response tuple** answers with, given `wireOpenAPIResult` in hand.
+    /// What such a handler answers with, given `wireOpenAPIResult` in hand.
     ///
-    /// Without a `status` the response is the one ``selectedResponse(for:)`` picks, as for a bare body.
-    /// With one, the handler chose at run time by returning a case of an enum of the operation's
-    /// documented successes — its cases verified against the document by `diagnoseReturnedStatus` — so this
-    /// switches over that enum, one generated `Output` case each, with no `default`. The switch is
-    /// exhaustive because the enum is closed: a status the document does not declare is not a value the
-    /// handler can produce, and so not one this forwarder has to answer.
+    /// With a status, the handler chose at run time by returning a case of an enum of the operation's
+    /// documented successes, whose cases and payloads `diagnoseReturnedStatus` verified against the
+    /// document. So this switches over that enum, one generated `Output` case each, with no `default`, and
+    /// hands a case's payload — the response's generated `Headers` — straight to the generated response.
+    /// Without one, the response is the one ``selectedResponse(for:)`` picks, built with the returned
+    /// `Headers`. Either way nothing about the response is checked at run time but its body, as for a
+    /// body returned alone: the compiler already holds the handler to the rest.
     func tupleResponse(_ operation: DiscoveredOperation, indent: String) -> String {
         let bodyLocal = "wireOpenAPIResultBody"
+        let tuple = operation.isResponseTuple
         let bound =
-            operation.returnType == nil ? "" : "\(indent)let \(bodyLocal) = wireOpenAPIResult.body\n"
+            tuple && operation.returnType != nil
+            ? "\(indent)let \(bodyLocal) = wireOpenAPIResult.body\n" : ""
         guard operation.returnsStatus else {
-            let response = selectedResponse(for: operation)
-            let status = "HTTPResponse.Status(code: \(response.code))"
-            return bound + constructed(response, operation, status: status, body: bodyLocal, indent: indent)
+            let headers = tuple ? "wireOpenAPIResult.headers" : "wireOpenAPIResult"
+            return bound
+                + constructed(
+                    selectedResponse(for: operation),
+                    operation,
+                    headers: headers,
+                    body: bodyLocal,
+                    indent: indent
+                )
         }
         let cases = candidateResponses(for: operation).map { response in
-            "\(indent)case .\(GeneratorStatusNames.safeName(for: response.code)):\n"
+            let name = GeneratorStatusNames.safeName(for: response.code)
+            let pattern = response.headers.isEmpty ? ".\(name)" : ".\(name)(let wireOpenAPIHeaders)"
+            return "\(indent)case \(pattern):\n"
                 + constructed(
                     response,
                     operation,
-                    status: "HTTPResponse.Status(code: \(response.code))",
+                    headers: response.headers.isEmpty ? nil : "wireOpenAPIHeaders",
                     body: bodyLocal,
                     indent: indent + "    "
                 )
         }
         return """
-            \(bound)\(indent)switch wireOpenAPIResult.status {
+            \(bound)\(indent)switch \(tuple ? "wireOpenAPIResult.status" : "wireOpenAPIResult") {
             \(cases.joined(separator: "\n"))
             \(indent)}
             """
     }
 
-    /// One documented response, built from a response tuple: its declared headers read out of the returned
-    /// fields, its body checked and wrapped.
-    ///
-    /// The generated `Headers` initialiser takes one argument per declared header, in document order —
-    /// the order `SpecResponse.headers` keeps — named by the same safe-name transform as every other
-    /// member. A required header the fields omit, and a field the response does not declare, both throw
-    /// `WireOpenAPIUndocumentedResponse`: the generated type has no member for the one and nothing honest
-    /// to put in the other.
+    /// One documented response, built from what the handler returned: its generated `Headers` passed as
+    /// they are, its body checked and wrapped.
     private func constructed(
         _ response: SpecResponse,
         _ operation: DiscoveredOperation,
-        status: String,
+        headers: String?,
         body: String,
         indent: String
     ) -> String {
         let caseName = GeneratorStatusNames.safeName(for: response.code)
-        let id = operation.operationID
         var arguments: [String] = []
         var prelude = ""
-        if operation.returnsHeaders {
-            let declared = response.headers.map { "\"\($0.name)\"" }.joined(separator: ", ")
-            prelude += """
-                \(indent)try wireOpenAPICheckResponseHeaders(
-                \(indent)    wireOpenAPIResult.headers,
-                \(indent)    declared: [\(declared)],
-                \(indent)    operationID: "\(id)",
-                \(indent)    status: \(status)
-                \(indent))
-
-                """
-            if !response.headers.isEmpty {
-                let members = response.headers.map { header -> String in
-                    let member = GeneratorSafeNames.swiftMemberName(for: header.name, strategy: namingStrategy)
-                    let read =
-                        header.isRequired
-                        ? "try wireOpenAPIRequiredResponseHeader(\"\(header.name)\", in: wireOpenAPIResult.headers, "
-                            + "operationID: \"\(id)\", status: \(status))"
-                        : "try wireOpenAPIResponseHeader(\"\(header.name)\", in: wireOpenAPIResult.headers, "
-                            + "required: false, operationID: \"\(id)\", status: \(status))"
-                    return "\(member): \(read)"
-                }
-                arguments.append("headers: .init(\(members.joined(separator: ", ")))")
-            }
-        }
+        if let headers { arguments.append("headers: \(headers)") }
         if operation.returnType != nil {
-            prelude += responseCheck(response.assertions, access: body, operationID: id, indent: indent)
+            prelude += responseCheck(
+                response.assertions,
+                access: body,
+                operationID: operation.operationID,
+                indent: indent
+            )
             arguments.append("body: .json(\(body))")
         }
         return "\(prelude)\(indent)return .\(caseName)(.init(\(arguments.joined(separator: ", "))))"

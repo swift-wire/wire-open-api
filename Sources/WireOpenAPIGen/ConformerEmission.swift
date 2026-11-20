@@ -224,23 +224,13 @@ extension DirectDispatchEmitter {
         // answer the service's own breach as though the caller had caused it, and an `@ErrorResponse` on
         // the response error whose own body is invalid would loop. Rethrowing here sends it one hop to
         // the terminal, where `HTTPResponseConvertible` answers 500 with no body of the document's.
-        var regress =
+        let regress =
             settings.validatesResponses
             ? """
             \(indent)} catch let wireOpenAPIResponseFailure as WireOpenAPIResponseValidationError {
             \(indent)    throw wireOpenAPIResponseFailure
             """ + "\n"
             : ""
-        // The same blame, for the same reason: header fields the document does not describe are the
-        // service's breach, and no mapping the author wrote for a caller's mistake should answer it. Only a
-        // tuple returning fields can commit one — its status is an enum of the documented successes.
-        if operation.returnsHeaders {
-            regress += """
-                \(indent)} catch let wireOpenAPIUndocumented as WireOpenAPIUndocumentedResponse {
-                \(indent)    throw wireOpenAPIUndocumented
-
-                """
-        }
         return regress
             + mappings.map { mapping in
                 let pattern =
@@ -438,7 +428,7 @@ extension DirectDispatchEmitter {
                 .map { bodyBinding($0, in: operation, indent: indent) + "\n" } ?? "")
             + resolved
         let call = "try await \(subject).\(operation.methodName)(\(arguments.joined(separator: ", ")))"
-        guard !operation.isResponseTuple else {
+        guard !operation.isResponseTuple, !operation.returnsStatus, !operation.returnsHeaders else {
             return "\(prelude)\(indent)let wireOpenAPIResult = \(call)\n" + tupleResponse(operation, indent: indent)
         }
         let response = selectedResponse(for: operation)

@@ -191,7 +191,8 @@ extension OpenAPIKit.OpenAPI.Document {
                                 of: response,
                                 at: documentPath,
                                 describing: "the \(code) response of '\(operationID)'"
-                            )
+                            ),
+                            component: componentName(of: responseReference)
                         )
                     }
                     .sorted { $0.code < $1.code }
@@ -212,6 +213,14 @@ extension OpenAPIKit.OpenAPI.Document {
         return found
     }
 
+    /// The `components/responses` key a response references, or nil when it is written inline.
+    private func componentName(
+        of reference: Either<OpenAPIKit.OpenAPI.Reference<OpenAPIKit.OpenAPI.Response>, OpenAPIKit.OpenAPI.Response>
+    ) -> String? {
+        guard case .a(let pointer) = reference else { return nil }
+        return pointer.name
+    }
+
     /// A response's declared headers, resolved, in document order.
     private func responseHeaders(
         of response: OpenAPIKit.OpenAPI.Response,
@@ -220,18 +229,7 @@ extension OpenAPIKit.OpenAPI.Document {
     ) -> [SpecResponseHeader] {
         (response.headers ?? [:]).map { name, headerReference in
             let header = resolve(headerReference, "a header reference '\(name)' in \(subject)", at: documentPath)
-            var isPlainString = false
-            if case .a(let context) = header.schemaOrContent {
-                let schema: OpenAPIKit.JSONSchema? =
-                    switch context.schema {
-                    case .a(let reference): try? components.lookup(reference)
-                    case .b(let schema): schema
-                    }
-                if let schema, case .string(let core, _) = schema.value {
-                    isPlainString = core.format == .unspecified && core.allowedValues == nil
-                }
-            }
-            return SpecResponseHeader(name: name, isRequired: header.required, isPlainString: isPlainString)
+            return SpecResponseHeader(name: name, isRequired: header.required)
         }
     }
 

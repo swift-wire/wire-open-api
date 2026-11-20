@@ -376,6 +376,6 @@ struct SourceIndexes {
     /// The graph-aware bindings reachable in this run, so a parameter attribute outside the four names
     /// this generator knows can still be recognised as one — see `GraphAwareBindings`.
     let graphAwareBindings: GraphAwareBindings
-    /// The enums a response tuple's `status` may name — see `DeclaredEnums`.
+    /// The enums a typed operation's returned status may name — see `DeclaredEnums`.
     let declaredEnums: DeclaredEnums
 }

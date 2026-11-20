@@ -33,13 +33,14 @@ struct DiscoveredOperation {
     let returnType: String?
     /// What the return type says about the response beyond its body. Empty for a raw operation.
     var responseShape = ResponseShape()
-    /// The handler returns a **response tuple** — WireMVC's labelled `(status:headers:body:)` or a subset
-    /// of it — rather than the body alone.
+    /// The handler returns a **response tuple**, `(status:body:)` or `(headers:body:)`, rather than the
+    /// body alone.
     var isResponseTuple: Bool { responseShape.isTuple }
-    /// The tuple carries a `status`: the handler chooses, at run time, which documented success it is.
+    /// The handler returns a status enum, in a tuple or bare: it chooses, at run time, which documented
+    /// success it is, and each choice carries its response's headers.
     var returnsStatus: Bool { responseShape.status }
-    /// The tuple carries `headers`: the handler supplies the response's declared header fields.
-    var returnsHeaders: Bool { responseShape.headers }
+    /// The handler returns its one success's generated `Headers`, in a tuple or bare.
+    var returnsHeaders: Bool { responseShape.headersType != nil }
     /// Whether this operation is bound by the typed shim rather than handed the generated `Input`.
     let isTyped: Bool
     /// The status named by `@JSONResponse(status:)` or `@ResponseStatus(_:)`, as written — `created`.

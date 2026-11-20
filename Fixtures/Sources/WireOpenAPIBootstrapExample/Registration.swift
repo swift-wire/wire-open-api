@@ -21,9 +21,9 @@ final class TaskRegistry: Sendable {
     }
 }
 
-/// **Response tuples on typed operations.** Each handler says something about its response alongside
-/// the body, in the same labelled tuple a WireMVC route returns — and the document decides which
-/// responses those may be.
+/// **Choosing a response, and its headers, on typed operations.** Each handler says something about its
+/// response alongside the body — and the compiler holds it to what the document declares, because the
+/// status and the headers are both generated or checked types, never a free status or free fields.
 @Singleton
 @OpenAPIController()
 struct RegistrationController {
@@ -33,59 +33,57 @@ struct RegistrationController {
     /// handler has run: 201 with a `Location` for a new task, 200 with an `ETag` for one already held.
     ///
     /// The status is `Operations.RegisterTask.SuccessStatus`, declared below with exactly the document's
-    /// two successes, so the compiler refuses any status the document does not describe.
-    ///
-    /// `refused` throws, and the catch-all answers it with the document's 400 — which is what a catch-all
-    /// is for. `stray` returns a field neither response declares, which is the service breaking its own
-    /// contract: 500 with no body — and the catch-all here does not get to answer it, because the blame is
-    /// the service's, not the caller's.
+    /// two successes, each carrying its response's generated headers. A status or a header the document
+    /// does not describe cannot be written. `refused` throws, and the catch-all answers it with the
+    /// document's 400 — which is what a catch-all is for.
     @Operation
     @ErrorResponse(Swift.Error.self, .badRequest)
     func registerTask(
         @Query id: String
-    ) async throws -> (
-        status: Operations.RegisterTask.SuccessStatus, headers: HTTPFields, body: Components.Schemas.Task
-    ) {
+    ) async throws -> (status: Operations.RegisterTask.SuccessStatus, body: Components.Schemas.Task) {
         let task = Components.Schemas.Task(id: id, title: "registered \(id)")
         struct Refused: Error {}
-        switch id {
-        case "refused": throw Refused()
-        case "stray": return (.created, [.location: "/api/v1/tasks/\(id)", .cacheControl: "no-store"], task)
-        default: break
-        }
+        if id == "refused" { throw Refused() }
         return registry.register(id)
-            ? (.created, [.location: "/api/v1/tasks/\(id)"], task)
-            : (.ok, [.eTag: "\"\(id)\""], task)
+            ? (.created(.init(location: "/api/v1/tasks/\(id)")), task)
+            : (.ok(.init(eTag: "\"\(id)\"")), task)
     }
 
-    /// The bodiless form: 204 when done at once, 202 when it is only queued.
+    /// The bodiless form, returned bare because Swift has no one-element labelled tuple: 204 when done at
+    /// once, 202 with an integer `Retry-After` when it is only queued.
     @Operation
-    func touchTask(
-        @Path id: String
-    ) async throws -> (status: Operations.TouchTask.SuccessStatus, headers: HTTPFields) {
-        (id == "later" ? .accepted : .noContent, [:])
+    func touchTask(@Path id: String) async throws -> Operations.TouchTask.SuccessStatus {
+        id == "later" ? .accepted(.init(retryAfter: 30)) : .noContent
+    }
+
+    /// One bodiless success with a required integer header: the generated headers, returned alone.
+    @Operation
+    func markSeen(@Path id: String) async throws -> Operations.MarkSeen.Output.NoContent.Headers {
+        .init(xSeenCount: id.count)
     }
 
     /// One documented success, so there is no status to choose — only the header the document requires.
     @Operation
-    func taskVersion(@Path id: String) async throws -> (headers: HTTPFields, body: Components.Schemas.Task) {
-        ([.eTag: "\"v1-\(id)\""], .init(id: id, title: "task-\(id)"))
+    func taskVersion(
+        @Path id: String
+    ) async throws -> (headers: Operations.TaskVersion.Output.Ok.Headers, body: Components.Schemas.Task) {
+        (.init(eTag: "\"v1-\(id)\""), .init(id: id, title: "task-\(id)"))
     }
 }
 
-// The documented successes of each operation that chooses its status per call. WireOpenAPIGen checks the
-// cases against the document, named as the generated `Output` cases are.
+// The documented successes of each operation that chooses its status per call, each case carrying the
+// generated headers its response declares. WireOpenAPIGen checks both against the document.
 
 extension Operations.RegisterTask {
-    enum SuccessStatus: Sendable, Hashable, CaseIterable {
-        case ok
-        case created
+    enum SuccessStatus: Sendable, Hashable {
+        case ok(Operations.RegisterTask.Output.Ok.Headers)
+        case created(Operations.RegisterTask.Output.Created.Headers)
     }
 }
 
 extension Operations.TouchTask {
-    enum SuccessStatus: Sendable, Hashable, CaseIterable {
-        case accepted
+    enum SuccessStatus: Sendable, Hashable {
+        case accepted(Operations.TouchTask.Output.Accepted.Headers)
         case noContent
     }
 }

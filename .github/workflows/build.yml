@@ -210,25 +210,25 @@ jobs:
             "http://127.0.0.1:8080/api/v1/tasks/9/replace?title=renamed" -w ' [%{http_code}]')
           replacedBare=$(curl -s -X POST "http://127.0.0.1:8080/api/v1/tasks/9/replace?title=renamed" \
             -w ' [%{http_code}]')
-          # Response tuples on typed operations. `registerTask` documents 200 and 201 and the handler
-          # chooses per call; each response declares a header the tuple's `headers` supplies. Captured
-          # as `status|header|body` so one assertion covers all three.
+          # Choosing a response on typed operations. `registerTask` documents 200 and 201 and the handler
+          # chooses per call; each response declares a header its status case carries. Captured as
+          # `status|header|body` so one assertion covers all three. A status or a header the document
+          # does not declare has no probe: the handler's types have no way to write one.
           tuple() { curl -s -D - "$@" | tr -d '\r' \
             | awk 'NR==1{s=$2} tolower($1)=="location:"||tolower($1)=="etag:"{h=$2} /^\{/{b=$0}
                    END{print s "|" h "|" b}'; }
           registeredNew=$(tuple -X POST "http://127.0.0.1:8080/api/v1/tasks/register?id=r1")
           registeredAgain=$(tuple -X POST "http://127.0.0.1:8080/api/v1/tasks/register?id=r1")
-          # A field neither response declares: the service broke its own contract, so 500 with no body —
-          # and the operation's catch-all does not answer it, which `refused` (an ordinary throw the
-          # catch-all does answer) is the control for. A status the document does not declare has no probe:
-          # the handler's status enum has no case for one, so it cannot be returned.
-          undocumentedHeader=$(curl -s -o /dev/null -X POST -w '%{http_code}:%{size_download}' \
-            "http://127.0.0.1:8080/api/v1/tasks/register?id=stray")
+          # An ordinary throw beside the choice: the operation's catch-all answers it with its 400.
           refused=$(curl -s -o /dev/null -X POST -w '%{http_code}' \
             "http://127.0.0.1:8080/api/v1/tasks/register?id=refused")
           touchedNow=$(curl -s -o /dev/null -X POST -w '%{http_code}' http://127.0.0.1:8080/api/v1/tasks/9/touch)
-          touchedLater=$(curl -s -o /dev/null -X POST -w '%{http_code}' \
-            http://127.0.0.1:8080/api/v1/tasks/later/touch)
+          # Integer headers, supplied as the generated type: one carried by a bodiless status case, one
+          # returned bare as a bodiless response's headers. Captured as `status|value`.
+          headerOf() { name=$1; shift; curl -s -o /dev/null -D - "$@" | tr -d '\r' \
+            | awk -v n="$name" 'NR==1{s=$2} tolower($1)==n":"{h=$2} END{print s "|" h}'; }
+          touchedLater=$(headerOf retry-after -X POST http://127.0.0.1:8080/api/v1/tasks/later/touch)
+          seen=$(headerOf x-seen-count -X POST http://127.0.0.1:8080/api/v1/tasks/abc/seen)
           versioned=$(tuple http://127.0.0.1:8080/api/v1/tasks/9/version)
           kill "$pid" 2>/dev/null || true
           [ "$ok" = 1 ] || { echo "the fixture did not bind"; cat serverlog.txt; exit 1; }
@@ -452,6 +452,8 @@ jobs:
           echo "register (new)   → $registeredNew"
           echo "register (again) → $registeredAgain"
           echo "version          → $versioned"
+          echo "touch (later)    → $touchedLater"
+          echo "seen             → $seen"
           case "$registeredNew" in
             '201|%2Fapi%2Fv1%2Ftasks%2Fr1|{"id":"r1","title":"registered r1"}') ;;
             *) echo "a returned 201 or its Location did not reach the wire ($registeredNew)"; exit 1;;
@@ -460,11 +462,10 @@ jobs:
             '200|%22r1%22|{"id":"r1","title":"registered r1"}') ;;
             *) echo "a returned 200 or its ETag did not reach the wire ($registeredAgain)"; exit 1;;
           esac
-          [ "$undocumentedHeader" = "500:0" ] \
-            || { echo "an undeclared returned header was not 500 with no body ($undocumentedHeader)"; exit 1; }
           [ "$refused" = 400 ] || { echo "the catch-all did not answer an ordinary throw ($refused)"; exit 1; }
-          [ "$touchedNow" = 204 ] && [ "$touchedLater" = 202 ] \
-            || { echo "a bodiless returned status was not sent ($touchedNow, $touchedLater)"; exit 1; }
+          [ "$touchedNow" = 204 ] && [ "$touchedLater" = '202|30' ] \
+            || { echo "a bodiless status or its integer header was not sent ($touchedNow, $touchedLater)"; exit 1; }
+          [ "$seen" = '204|3' ] || { echo "bare generated headers were not sent ($seen)"; exit 1; }
           case "$versioned" in
             '200|%22v1-9%22|{"id":"9","title":"task-9"}') ;;
             *) echo "(headers:body:) did not send its required header ($versioned)"; exit 1;;
