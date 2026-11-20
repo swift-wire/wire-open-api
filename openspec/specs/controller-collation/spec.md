@@ -198,6 +198,10 @@ generic `where` clause, write
 `<file>:<line>: error: '<Type>' has a generic `where` clause, which the emitted conformer cannot reproduce: it renames the controller's generic parameters, and rewriting a clause that names them would mean editing constraint syntax by substitution. Write the constraint on the parameter itself instead — `<Store: TaskStoring>`.`
 to standard error and exit with status 1.
 
+This diverges from wire-mvc, whose `@Controller` carries a generic `where` clause through to its
+proxy. Accepting the clause here is tracked in
+https://github.com/swift-wire/wire-open-api/issues/110.
+
 #### Scenario: a constraint written in a `where` clause
 - **WHEN** a controller is declared `struct TaskController<Store> where Store: TaskStoring`
 - **THEN** the generator exits 1 with the message above, reported against the controller's own file and line
